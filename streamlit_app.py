@@ -1,4 +1,30 @@
-# -*- coding: utf-8 -*-
+                        # Show scenario comparison with scores
+                        if st.session_state.detailed_steps:
+                            st.markdown("### 🏆 Σύγκριση Σεναρίων με Scores")
+                            
+                            scenario_comparison = []
+                            for scenario_num, scenario_data in st.session_state.detailed_steps.items():
+                                if 'scores' in scenario_data:
+                                    scores = scenario_data['scores']
+                                    scenario_comparison.append({
+                                        'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                                        'Βήμα 1': scores.get('step1', 0),
+                                        'Βήμα 2': scores.get('step2', 0),
+                                        'Βήμα 3': scores.get('step3', 0),
+                                        'Βήμα 4': scores.get('step4', 0),
+                                        'Βήμα 5': scores.get('step5', 0),
+                                        'Βήμα 6': scores.get('step6', 0),
+                                        '🏆 ΤΕΛΙΚΟ SCORE': scores.get('final', 0)
+                                    })
+                            
+                            if scenario_comparison:
+                                comparison_df = pd.DataFrame(scenario_comparison)
+                                
+                                # Highlight best scenario (lowest score)
+                                best_score = comparison_df['🏆 ΤΕΛΙΚΟ SCORE'].min()
+                                best_scenario = comparison_df[comparison_df['🏆 ΤΕΛΙΚΟ SCORE'] == best_score]['Σενάριο'].iloc[0]
+                                
+                                st.success(f"🥇 **Καλύτερο Σενάριο:**# -*- coding: utf-8 -*-
 """
 Streamlit App - Σύστημα Κατανομής Μαθητών Α' Δημοτικού
 Ολοκληρωμένη εφαρμογή σύμφωνα με τις προδιαγραφές
@@ -303,14 +329,24 @@ def show_app_control():
 
 # Helper Functions
 def auto_num_classes(df, override=None, min_classes=2):
-    """Υπολογισμός αριθμού τμημάτων"""
+    """Υπολογισμός αριθμού τμημάτων βάσει του τύπου ⌈N/25⌉"""
     if override is not None:
         try:
-            return int(override)
+            return max(min_classes, int(override))
         except:
             pass
-    N = len(df) if df is not None else 0
-    return max(min_classes, math.ceil(N / 25))
+    
+    if df is None or len(df) == 0:
+        return min_classes
+        
+    N = len(df)
+    calculated_classes = math.ceil(N / 25)
+    
+    # Ελάχιστα 2 τμήματα, εκτός αν έχουμε λιγότερους από 13 μαθητές
+    if N < 13:
+        return 1
+    else:
+        return max(min_classes, calculated_classes)
 
 def validate_excel_columns(df):
     """Έλεγχος απαιτούμενων στηλών"""
@@ -396,6 +432,9 @@ class StudentDistributor:
         """Βήμα 1: Ισορροπία Πληθυσμού"""
         total_students = len(self.data)
         
+        # Υπολογισμός αριθμού τμημάτων: ⌈N/25⌉
+        self.num_classes = math.ceil(total_students / 25)
+        
         # Δημιουργία base assignment
         students_per_class = total_students // self.num_classes
         remainder = total_students % self.num_classes
@@ -403,7 +442,12 @@ class StudentDistributor:
         assignment = []
         for i in range(self.num_classes):
             class_size = students_per_class + (1 if i < remainder else 0)
-            assignment.extend([f'ΤΜΗΜΑ_{i+1}'] * class_size)
+            # Δυναμικά ονόματα τμημάτων (Α1, Α2, Α3, κτλ ή ΤΜΗΜΑ_1, ΤΜΗΜΑ_2, κτλ)
+            if self.num_classes <= 10:
+                class_name = f'Α{i+1}'  # Α1, Α2, Α3...
+            else:
+                class_name = f'ΤΜΗΜΑ_{i+1}'  # ΤΜΗΜΑ_1, ΤΜΗΜΑ_2...
+            assignment.extend([class_name] * class_size)
         
         np.random.seed(scenario_num * 42)  # Διαφορετικό seed για κάθε σενάριο
         np.random.shuffle(assignment)
@@ -450,8 +494,13 @@ class StudentDistributor:
             if row.get('ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ') == 'Ν':
                 teacher_children.append(idx)
         
+        # Δυναμικά ονόματα τμημάτων
+        if self.num_classes <= 10:
+            class_names = [f'Α{i+1}' for i in range(self.num_classes)]
+        else:
+            class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+            
         # Distribute teacher children evenly across classes
-        class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
         for i, child_idx in enumerate(teacher_children):
             target_class = class_names[i % self.num_classes]
             result[child_idx] = target_class
@@ -467,7 +516,12 @@ class StudentDistributor:
             if row.get('ΖΩΗΡΟΣ') == 'Ν':
                 active_students.append(idx)
         
-        class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+        # Δυναμικά ονόματα τμημάτων
+        if self.num_classes <= 10:
+            class_names = [f'Α{i+1}' for i in range(self.num_classes)]
+        else:
+            class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+            
         for i, student_idx in enumerate(active_students):
             target_class = class_names[i % self.num_classes]
             result[student_idx] = target_class
@@ -483,7 +537,12 @@ class StudentDistributor:
             if row.get('ΙΔΙΑΙΤΕΡΟΤΗΤΑ') == 'Ν':
                 special_students.append(idx)
         
-        class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+        # Δυναμικά ονόματα τμημάτων
+        if self.num_classes <= 10:
+            class_names = [f'Α{i+1}' for i in range(self.num_classes)]
+        else:
+            class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+            
         for i, student_idx in enumerate(special_students):
             target_class = class_names[i % self.num_classes]
             result[student_idx] = target_class
@@ -543,6 +602,12 @@ class StudentDistributor:
             for conflict in conflict_names:
                 conflicts.append((name, conflict))
         
+        # Δυναμικά ονόματα τμημάτων για εναλλακτικές επιλογές
+        if self.num_classes <= 10:
+            all_classes = [f'Α{i+1}' for i in range(self.num_classes)]
+        else:
+            all_classes = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+        
         # Resolve conflicts
         for name1, name2 in conflicts:
             name1_idx = self.data[self.data['ΟΝΟΜΑ'] == name1].index
@@ -555,46 +620,167 @@ class StudentDistributor:
                 if result[name1_idx] == result[name2_idx]:
                     # Move second person to different class
                     current_class = result[name1_idx]
-                    available_classes = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes) if f'ΤΜΗΜΑ_{i+1}' != current_class]
+                    available_classes = [cls for cls in all_classes if cls != current_class]
                     if available_classes:
                         result[name2_idx] = available_classes[0]
         
         return result
     
+    def calculate_scenario_score(self, assignment):
+        """Υπολογισμός συνολικού score για ένα σενάριο κατανομής"""
+        if not assignment or len(assignment) != len(self.data):
+            return float('inf')  # Worst possible score
+        
+        score = 0
+        
+        # 1. Population Balance Score (0-100 points)
+        class_counts = defaultdict(int)
+        for class_assignment in assignment:
+            if class_assignment:
+                class_counts[class_assignment] += 1
+        
+        if class_counts:
+            populations = list(class_counts.values())
+            pop_std = np.std(populations)
+            max_pop = max(populations)
+            
+            # Penalty for classes > 25 students (heavy penalty)
+            if max_pop > 25:
+                score += (max_pop - 25) * 50
+            
+            # Penalty for population imbalance
+            score += pop_std * 10
+        
+        # 2. Gender Balance Score (0-50 points)
+        for class_name in class_counts.keys():
+            class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
+            boys = sum(1 for i in class_indices if self.data.iloc[i]['ΦΥΛΟ'] == 'Α')
+            girls = len(class_indices) - boys
+            gender_diff = abs(boys - girls)
+            score += gender_diff * 2
+        
+        # 3. Special Categories Balance (0-30 points each)
+        special_categories = ['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ', 'ΖΩΗΡΟΣ', 'ΙΔΙΑΙΤΕΡΟΤΗΤΑ', 'ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ']
+        
+        for category in special_categories:
+            if category in self.data.columns:
+                category_distribution = defaultdict(int)
+                for class_name in class_counts.keys():
+                    class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
+                    category_count = sum(1 for i in class_indices 
+                                       if self.data.iloc[i].get(category, 'Ο') == 'Ν')
+                    category_distribution[class_name] = category_count
+                
+                if category_distribution:
+                    cat_values = list(category_distribution.values())
+                    cat_std = np.std(cat_values)
+                    score += cat_std * 5
+        
+        # 4. Friendship Score (0-100 points)
+        broken_friendships = 0
+        processed_pairs = set()
+        
+        for idx, row in self.data.iterrows():
+            if idx < len(assignment):
+                name = row['ونOMA']
+                current_class = assignment[idx]
+                friends = self.parse_relationships(row.get('ΦΙΛΟΙ', ''))
+                
+                for friend in friends:
+                    friend_rows = self.data[self.data['ΟΝΟΜΑ'] == friend]
+                    if len(friend_rows) > 0:
+                        friend_idx = friend_rows.index[0]
+                        if friend_idx < len(assignment):
+                            friend_class = assignment[friend_idx]
+                            
+                            # Check if friendship is mutual
+                            friend_friends = self.parse_relationships(
+                                friend_rows.iloc[0].get('ΦΙΛΟΙ', '')
+                            )
+                            
+                            pair = tuple(sorted([name, friend]))
+                            if name in friend_friends and pair not in processed_pairs:
+                                if current_class != friend_class:
+                                    broken_friendships += 1
+                                processed_pairs.add(pair)
+        
+        score += broken_friendships * 20
+        
+        # 5. Conflict Penalty (0-200 points)
+        conflict_violations = 0
+        for idx, row in self.data.iterrows():
+            if idx < len(assignment):
+                name = row['ونOMA']
+                current_class = assignment[idx]
+                conflicts = self.parse_relationships(row.get('ΣΥΓΚΡΟΥΣΗ', ''))
+                
+                for conflict in conflicts:
+                    conflict_rows = self.data[self.data['ونOMA'] == conflict]
+                    if len(conflict_rows) > 0:
+                        conflict_idx = conflict_rows.index[0]
+                        if conflict_idx < len(assignment):
+                            conflict_class = assignment[conflict_idx]
+                            if current_class == conflict_class:
+                                conflict_violations += 1
+        
+        score += conflict_violations * 100  # Heavy penalty for conflicts
+        
+        return round(score, 2)
+    
     def run_distribution(self, num_scenarios=3):
-        """Εκτέλεση πλήρους κατανομής"""
+        """Εκτέλεση πλήρους κατανομής με score calculation"""
+        scenario_scores = {}
+        
         for scenario in range(1, num_scenarios + 1):
             scenario_data = {}
             
             # Execute all 7 steps
             step1 = self.step1_population_balance(scenario)
             scenario_data[f'ΒΗΜΑ1_ΣΕΝΑΡΙΟ_{scenario}'] = step1
+            score1 = self.calculate_scenario_score(step1)
             
             step2 = self.step2_gender_balance(scenario, step1)
             scenario_data[f'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_{scenario}'] = step2
+            score2 = self.calculate_scenario_score(step2)
             
             step3 = self.step3_teacher_children(scenario, step2)
             scenario_data[f'ΒΗΜΑ3_ΣΕΝΑΡΙΟ_{scenario}'] = step3
+            score3 = self.calculate_scenario_score(step3)
             
             step4 = self.step4_active_students(scenario, step3)
             scenario_data[f'ΒΗΜΑ4_ΣΕΝΑΡΙΟ_{scenario}'] = step4
+            score4 = self.calculate_scenario_score(step4)
             
             step5 = self.step5_special_needs(scenario, step4)
             scenario_data[f'ΒΗΜΑ5_ΣΕΝΑΡΙΟ_{scenario}'] = step5
+            score5 = self.calculate_scenario_score(step5)
             
             step6 = self.step6_friendships(scenario, step5)
             scenario_data[f'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario}'] = step6
+            score6 = self.calculate_scenario_score(step6)
             
             step7 = self.step7_final_conflicts(scenario, step6)
+            final_score = self.calculate_scenario_score(step7)
             
-            # Store final result
+            # Store scenario with all step scores
             self.scenarios[scenario] = {
                 'data': scenario_data,
-                'final': step7
+                'final': step7,
+                'scores': {
+                    'step1': score1,
+                    'step2': score2,
+                    'step3': score3,
+                    'step4': score4,
+                    'step5': score5,
+                    'step6': score6,
+                    'final': final_score
+                }
             }
+            
+            scenario_scores[scenario] = final_score
         
-        # Pick best scenario (simplified - pick first)
-        best_scenario = 1
+        # Pick best scenario (lowest score is best)
+        best_scenario = min(scenario_scores.keys(), key=lambda k: scenario_scores[k])
         final_assignment = self.scenarios[best_scenario]['final']
         
         # Add final assignment to data
@@ -1001,9 +1187,6 @@ def show_export_section():
                     st.warning("⚠️ Δεν υπάρχουν αναλυτικά βήματα")
                     return
                 
-                # Create ZIP file
-                zip_buffer = io.BytesIO()
-                
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     
                     for scenario_num, scenario_data in st.session_state.detailed_steps.items():
@@ -1014,11 +1197,50 @@ def show_export_section():
                             # Create DataFrame with all steps
                             df_detailed = st.session_state.data.copy()
                             
+                            # Add all step columns
                             for step_name, assignments in scenario_data['data'].items():
                                 df_detailed[step_name] = assignments
                             
                             # Add final result
                             df_detailed['ΒΗΜΑ7_ΤΕΛΙΚΟ'] = scenario_data['final']
+                            
+                            # Add scores as a separate column
+                            if 'scores' in scenario_data:
+                                scores = scenario_data['scores']
+                                # Create score summary row at the end
+                                score_row = [''] * len(df_detailed.columns)
+                                score_indices = {
+                                    f'ΒΗΜΑ1_ΣΕΝΑΡΙΟ_{scenario_num}': scores.get('step1', 0),
+                                    f'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_{scenario_num}': scores.get('step2', 0),
+                                    f'ΒΗΜΑ3_ΣΕΝΑΡΙΟ_{scenario_num}': scores.get('step3', 0),
+                                    f'ΒΗΜΑ4_ΣΕΝΑΡΙΟ_{scenario_num}': scores.get('step4', 0),
+                                    f'ΒΗΜΑ5_ΣΕΝΑΡΙΟ_{scenario_num}': scores.get('step5', 0),
+                                    f'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_num}': scores.get('step6', 0),
+                                    'ΒΗΜΑ7_ΤΕΛΙΚΟ': scores.get('final', 0)
+                                }
+                                
+                                # Add score column
+                                df_detailed['SCORE_ΒΗΜΑΤΟΣ'] = ''
+                                for col_name, score in score_indices.items():
+                                    if col_name in df_detailed.columns:
+                                        df_detailed.loc[0, 'SCORE_ΒΗΜΑΤΟΣ'] = f"Scores ανά βήμα →"
+                                
+                                # Create separate scores sheet
+                                scores_df = pd.DataFrame([{
+                                    'Βήμα': f'ΒΗΜΑ{i}',
+                                    'Score': score,
+                                    'Περιγραφή': desc
+                                } for i, (score, desc) in enumerate([
+                                    (scores.get('step1', 0), 'Ισορροπία Πληθυσμού'),
+                                    (scores.get('step2', 0), 'Ισορροπία Φύλου'),
+                                    (scores.get('step3', 0), 'Παιδιά Εκπαιδευτικών'),
+                                    (scores.get('step4', 0), 'Ζωηροί Μαθητές'),
+                                    (scores.get('step5', 0), 'Ιδιαιτερότητες'),
+                                    (scores.get('step6', 0), 'Φιλίες'),
+                                    (scores.get('final', 0), 'ΤΕΛΙΚΟ SCORE')
+                                ], 1)])
+                                
+                                scores_df.to_excel(writer, sheet_name='SCORES', index=False)
                             
                             df_detailed.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}', index=False)
                         
@@ -1027,13 +1249,36 @@ def show_export_section():
                             excel_buffer.getvalue()
                         )
                     
-                    # Add summary statistics
-                    if st.session_state.statistics is not None:
-                        stats_buffer = io.BytesIO()
-                        with pd.ExcelWriter(stats_buffer, engine='xlsxwriter') as writer:
-                            st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
+                    # Add comprehensive summary with all scenarios comparison
+                    if st.session_state.detailed_steps:
+                        summary_buffer = io.BytesIO()
+                        with pd.ExcelWriter(summary_buffer, engine='xlsxwriter') as writer:
+                            
+                            # Main statistics
+                            if st.session_state.statistics is not None:
+                                st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
+                            
+                            # Scenarios comparison with scores
+                            scenario_comparison = []
+                            for scenario_num, scenario_data in st.session_state.detailed_steps.items():
+                                if 'scores' in scenario_data:
+                                    scores = scenario_data['scores']
+                                    scenario_comparison.append({
+                                        'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                                        'Βήμα_1_Score': scores.get('step1', 0),
+                                        'Βήμα_2_Score': scores.get('step2', 0),
+                                        'Βήμα_3_Score': scores.get('step3', 0),
+                                        'Βήμα_4_Score': scores.get('step4', 0),
+                                        'Βήμα_5_Score': scores.get('step5', 0),
+                                        'Βήμα_6_Score': scores.get('step6', 0),
+                                        'ΤΕΛΙΚΟ_SCORE': scores.get('final', 0)
+                                    })
+                            
+                            if scenario_comparison:
+                                comparison_df = pd.DataFrame(scenario_comparison)
+                                comparison_df.to_excel(writer, sheet_name='Σύγκριση_Scores', index=False)
                         
-                        zip_file.writestr("ΣΤΑΤΙΣΤΙΚΑ_Κατανομής.xlsx", stats_buffer.getvalue())
+                        zip_file.writestr("ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx", summary_buffer.getvalue())
                 
                 # Download button
                 st.download_button(
@@ -1046,8 +1291,21 @@ def show_export_section():
                 
                 st.success("✅ Το ZIP αρχείο είναι έτοιμο για λήψη!")
                 
+                # Show what's included in ZIP
+                st.markdown("""
+                **📁 Περιεχόμενα ZIP αρχείου:**
+                - `ΣΕΝΑΡΙΟ_X_Αναλυτικά_Βήματα.xlsx` - Ένα αρχείο για κάθε σενάριο
+                  - **Φύλλο "Σενάριο_X":** Όλα τα δεδομένα + στήλες ΒΗΜΑ1 έως ΒΗΜΑ6 + ΒΗΜΑ7_ΤΕΛΙΚΟ
+                  - **Φύλλο "SCORES":** Αναλυτικά scores για κάθε βήμα
+                - `ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx` - Συνολική σύγκριση
+                  - **Φύλλο "Στατιστικά":** Τελικά στατιστικά κατανομής  
+                  - **Φύλλο "Σύγκριση_Scores":** Πίνακας με όλα τα scores ανά σενάριο
+                """)
+                
             except Exception as e:
                 st.error(f"❌ Σφάλμα δημιουργίας ZIP: {str(e)}")
+                with st.expander("🔍 Τεχνικές Λεπτομέρειες"):
+                    st.code(traceback.format_exc())
 
 def show_details_section():
     """Ενότητα αναλυτικών βημάτων"""
