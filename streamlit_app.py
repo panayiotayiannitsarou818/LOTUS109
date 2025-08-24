@@ -1,48 +1,3 @@
-                        # Show scenario comparison with scores
-                        if st.session_state.detailed_steps:
-                            st.markdown("### 🏆 Σύγκριση Σεναρίων με Scores")
-                            
-                            scenario_comparison = []
-                            for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-                                if 'scores' in scenario_data:
-                                    scores = scenario_data['scores']
-                                    scenario_comparison.append({
-                                        'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
-                                        'Βήμα 1': scores.get('step1', 0),
-                                        'Βήμα 2': scores.get('step2', 0),
-                                        'Βήμα 3': scores.get('step3', 0),
-                                        'Βήμα 4': scores.get('step4', 0),
-                                        'Βήμα 5': scores.get('step5', 0),
-                                        'Βήμα 6': scores.get('step6', 0),
-                                        '🏆 ΤΕΛΙΚΟ SCORE': scores.get('final', 0)
-                                    })
-                            
-                            if scenario_comparison:
-                                comparison_df = pd.DataFrame(scenario_comparison)
-                                
-                                # Highlight best scenario (lowest score)
-                                best_score = comparison_df['🏆 ΤΕΛΙΚΟ SCORE'].min()
-                                best_scenario = comparison_df[comparison_df['🏆 ΤΕΛΙΚΟ SCORE'] == best_score]['Σενάριο'].iloc[0]
-                                
-                                st.success(f"🥇 **Καλύτερο Σενάριο:**# -*- coding: utf-8 -*-
-"""
-Streamlit App - Σύστημα Κατανομής Μαθητών Α' Δημοτικού
-Ολοκληρωμένη εφαρμογή σύμφωνα με τις προδιαγραφές
-Γιαννίτσαρου Παναγιώτα - panayiotayiannitsarou@gmail.com
-"""
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import zipfile
-import io
-import math
-from collections import defaultdict
-import copy
-import traceback
-from datetime import datetime
-
-# Προαιρετικά imports για γραφήματα
 try:
     import plotly.express as px
     import plotly.graph_objects as go
@@ -1198,19 +1153,8 @@ def show_export_section():
                             df_detailed = st.session_state.data.copy()
                             
                             # Add all step columns
-                            import re as _re
-                            steps_sorted = sorted(list(scenario_data['data'].items()), key=lambda kv: int(_re.search(r'ΒΗΜΑ(\d+)_', kv[0]).group(1)) if _re.search(r'ΒΗΜΑ(\d+)_', kv[0]) else 999)
-                            prev = [''] * len(df_detailed)
-                            for step_name, assignments in steps_sorted:
-                                diffs = []
-                                for i, a in enumerate(assignments):
-                                    a = a or ''
-                                    if a and a != prev[i]:
-                                        diffs.append(a)
-                                        prev[i] = a
-                                    else:
-                                        diffs.append('')
-                                df_detailed[step_name] = diffs
+                            for step_name, assignments in scenario_data['data'].items():
+                                df_detailed[step_name] = assignments
                             
                             # Add final result
                             df_detailed['ΒΗΜΑ7_ΤΕΛΙΚΟ'] = scenario_data['final']
@@ -1251,9 +1195,7 @@ def show_export_section():
                                     (scores.get('final', 0), 'ΤΕΛΙΚΟ SCORE')
                                 ], 1)])
                                 
-                                breakdown = compute_final_breakdown_external(st.session_state.data, scenario_data['final'], scenario_num)
-                                scores_df = pd.DataFrame([breakdown])
-                                scores_df.to_excel(writer, sheet_name='ΒΑΘΜΟΛΟΓΙΑ', index=False)
+                                scores_df.to_excel(writer, sheet_name='SCORES', index=False)
                             
                             df_detailed.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}', index=False)
                         
@@ -1834,82 +1776,3 @@ def suggest_improvements(statistics, detailed_stats):
 if __name__ == "__main__":
     main()
         
-# --- Helper: Αναλυτική ΒΑΘΜΟΛΟΓΙΑ ανά σενάριο (μετά το Βήμα 7) ---
-def compute_final_breakdown_external(df, assignment, scenario_num):
-    import pandas as pd
-    # Map class -> list of indices
-    class_map = {}
-    for i, cls in enumerate(assignment):
-        class_map.setdefault(cls, []).append(i)
-
-    # Δ.Πληθυσμός (tolerance >1, +3/μονάδα)
-    sizes = [len(v) for v in class_map.values() if v is not None]
-    delta_pop_units = max(0, (max(sizes) - min(sizes)) - 1) if sizes else 0
-    penalty_pop = 3 * delta_pop_units
-
-    # Δ.Φύλο (άθροισμα για Α και Κ) (tolerance >1, +2/μονάδα)
-    delta_gender_units = 0
-    for gender in ['Α','Κ']:
-        counts = []
-        for cls, idxs in class_map.items():
-            cnt = sum(1 for i in idxs if str(df.iloc[i].get('ΦΥΛΟ','')).strip().upper()==gender)
-            counts.append(cnt)
-        if counts:
-            delta_gender_units += max(0, (max(counts) - min(counts)) - 1)
-    penalty_gender = 2 * delta_gender_units
-
-    # Δ.Γνώση Ελληνικών (Ν) (tolerance >2, +1/μονάδα)
-    greek_counts = []
-    for cls, idxs in class_map.items():
-        cnt = sum(1 for i in idxs if str(df.iloc[i].get('ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ','Ο')).strip().upper()=='Ν')
-        greek_counts.append(cnt)
-    delta_greek_units = max(0, (max(greek_counts) - min(greek_counts)) - 2) if greek_counts else 0
-    penalty_greek = 1 * delta_greek_units
-
-    # Παιδαγωγική Σύγκρουση (ζεύγη μέσα στο ίδιο τμήμα)
-    zz_pairs = zi_pairs = ii_pairs = 0
-    for cls, idxs in class_map.items():
-        z_list = [i for i in idxs if str(df.iloc[i].get('ΖΩΗΡΟΣ','Ο')).strip().upper()=='Ν']
-        i_list = [i for i in idxs if str(df.iloc[i].get('ΙΔΙΑΙΤΕΡΟΤΗΤΑ','Ο')).strip().upper()=='Ν']
-        nz, ni = len(z_list), len(i_list)
-        if nz>=2: zz_pairs += nz*(nz-1)//2  # Ζ-Ζ
-        if ni>=2: ii_pairs += ni*(ni-1)//2  # Ι-Ι
-        zi_pairs += nz*ni                   # Ζ-Ι
-    penalty_zz = 3 * zz_pairs
-    penalty_zi = 4 * zi_pairs
-    penalty_ii = 5 * ii_pairs
-
-    # "Σπασμένη" αμοιβαία φιλία (+5/δυάδα που χωρίζεται)
-    name_to_idx = {str(df.iloc[i]['ΟΝΟΜΑ']).strip(): i for i in range(len(df))}
-    friends_of = {}
-    for i, row in df.iterrows():
-        raw = str(row.get('ΦΙΛΟΙ','')).strip()
-        fset = {x.strip() for x in raw.split(',') if x.strip()}
-        friends_of[str(row['ΟΝΟΜΑ']).strip()] = fset
-    processed = set(); broken = 0
-    for a, aset in friends_of.items():
-        for b in aset:
-            if a in friends_of.get(b, set()):
-                pair = tuple(sorted((a,b)))
-                if pair in processed:
-                    continue
-                processed.add(pair)
-                ia, ib = name_to_idx.get(a), name_to_idx.get(b)
-                if ia is not None and ib is not None:
-                    ca = assignment[ia]; cb = assignment[ib]
-                    if ca != cb: broken += 1
-    penalty_broken = 5 * broken
-
-    total = penalty_pop + penalty_gender + penalty_greek + penalty_zz + penalty_zi + penalty_ii + penalty_broken
-
-    return {
-        'ΣΕΝΑΡΙΟ': f'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_num}',
-        'Δ.Πληθυσμός': int(delta_pop_units),
-        'Δ.Φύλο': int(delta_gender_units),
-        'Δ.Γνώση Ελληνικών': int(delta_greek_units),
-        'ΠαιδΣύγκ-Ζ-Ζ': int(zz_pairs),
-        'ΠαιδΣύγκ-Ζ-Ι': int(zi_pairs),
-        'ΠαιδΣύγκ-Ι-Ι': int(ii_pairs),
-        'ΣπασμένηΦιλία': int(broken),
-        'ΒΑΘΜΟΛΟΓΙΑ': int(total),
-    }
