@@ -9,7 +9,7 @@ step3_amivaia_filia_FIXED.py
 - Υπολογίζει broken δυάδες & penalty, επιλέγει έως 5 καλύτερα σενάρια.
 """
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import pandas as pd
 import re
 from pathlib import Path
@@ -31,7 +31,7 @@ def _class_fits(df: pd.DataFrame, col: str, class_name: str, add: int=1) -> bool
 def apply_step3_on_sheet(
     df2: pd.DataFrame,
     scenario_col: str,
-    num_classes: int | None = None) -> Tuple[pd.DataFrame, Dict]:
+    num_classes: Optional[int] = None) -> Tuple[pd.DataFrame, Dict]:
     """
     Παίρνει ένα DataFrame από Βήμα 2 (ένα sheet) και επιστρέφει:
     - df_after: με νέα στήλη ΒΗΜΑ3_ΣΕΝΑΡΙΟ_k (ίδιο όνομα με το sheet αλλά με 'ΒΗΜΑ3')

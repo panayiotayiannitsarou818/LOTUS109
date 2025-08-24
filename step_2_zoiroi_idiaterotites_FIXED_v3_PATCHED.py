@@ -5,7 +5,7 @@ Step 2 — Ζωηροί & Ιδιαιτερότητες (Fixed v3, **patched**)
   όπου k είναι ο αριθμός από το step1_col_name (π.χ. ΒΗΜΑ1_ΣΕΝΑΡΙΟ_2 -> k=2).
 - Όλα τα υπόλοιπα παραμένουν συμβατά.
 """
-from typing import List, Dict, Tuple, Any, Set
+from typing import List, Dict, Tuple, Any, Set, Optional
 import pandas as pd
 import random
 import re
@@ -184,7 +184,7 @@ def _extract_step1_id(step1_col_name: str) -> int:
 
 def step2_apply_FIXED_v3(
     df_in: pd.DataFrame,
-    num_classes: int | None = None,
+    num_classes: Optional[int] = None,
     step1_col_name: str,
     *,
     seed: int = 42,

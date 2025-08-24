@@ -32,7 +32,7 @@ best = pick_best_scenario(df, ['ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1','ΒΗΜΑ6_ΣΕΝΑ�
 """
 from __future__ import annotations
 import random
-from typing import Iterable, List, Tuple, Dict, Any, Optional
+from typing import Iterable, List, Tuple, Dict, Any, Optional, Optional
 import pandas as pd
 import numpy as np
 import re
