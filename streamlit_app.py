@@ -682,7 +682,7 @@ class StudentDistributor:
         
         for idx, row in self.data.iterrows():
             if idx < len(assignment):
-                name = row['ونOMA']
+                name = row['ΟΝΟΜΑ']
                 current_class = assignment[idx]
                 friends = self.parse_relationships(row.get('ΦΙΛΟΙ', ''))
                 
@@ -710,12 +710,12 @@ class StudentDistributor:
         conflict_violations = 0
         for idx, row in self.data.iterrows():
             if idx < len(assignment):
-                name = row['ونOMA']
+                name = row['ΟΝΟΜΑ']
                 current_class = assignment[idx]
                 conflicts = self.parse_relationships(row.get('ΣΥΓΚΡΟΥΣΗ', ''))
                 
                 for conflict in conflicts:
-                    conflict_rows = self.data[self.data['ونOMA'] == conflict]
+                    conflict_rows = self.data[self.data['ΟΝΟΜΑ'] == conflict]
                     if len(conflict_rows) > 0:
                         conflict_idx = conflict_rows.index[0]
                         if conflict_idx < len(assignment):
