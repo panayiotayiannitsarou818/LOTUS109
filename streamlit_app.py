@@ -54,6 +54,48 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+# --- Helpers added: auto_num_classes + display_data_summary ---
+from math import ceil
+
+def auto_num_classes(df, override=None, min_classes=2):
+    """Return ceil(N/25) with a safe minimum of 2 unless override is provided."""
+    if override is not None:
+        try:
+            return int(override)
+        except Exception:
+            pass
+    N = int(len(df)) if df is not None else 0
+    return max(min_classes, int(ceil(N/25)))
+
+def display_data_summary(df):
+    import pandas as pd
+    st.subheader("📊 Περίληψη Δεδομένων")
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        st.info("Δεν έχουν φορτωθεί δεδομένα ακόμη.")
+        return
+
+    total = int(len(df))
+    boys = int((df['ΦΥΛΟ'] == 'Α').sum()) if 'ΦΥΛΟ' in df.columns else 0
+    girls = int((df['ΦΥΛΟ'] == 'Κ').sum()) if 'ΦΥΛΟ' in df.columns else 0
+    teachers = int((df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'] == 'Ν').sum()) if 'ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ' in df.columns else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Συνολικοί Μαθητές", total)
+    c2.metric("Αγόρια", boys)
+    c3.metric("Κορίτσια", girls)
+    c4.metric("Παιδιά Εκπαιδευτικών", teachers)
+
+    if 'ΦΥΛΟ' in df.columns and PLOTLY_AVAILABLE:
+        vals, names = [], []
+        if boys > 0: vals.append(boys); names.append("Αγόρια")
+        if girls > 0: vals.append(girls); names.append("Κορίτσια")
+        if vals:
+            fig = px.pie(values=vals, names=names, title="Κατανομή Φύλου")
+            st.plotly_chart(fig, use_container_width=True)
+# --- end helpers ---
+
+
 def init_session_state():
     """Αρχικοποίηση session state variables"""
     if 'data' not in st.session_state:
