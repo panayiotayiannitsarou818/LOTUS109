@@ -1,30 +1,3 @@
-                        # Show scenario comparison with scores
-                        if st.session_state.detailed_steps:
-                            st.markdown("### 🏆 Σύγκριση Σεναρίων με Scores")
-                            
-                            scenario_comparison = []
-                            for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-                                if 'scores' in scenario_data:
-                                    scores = scenario_data['scores']
-                                    scenario_comparison.append({
-                                        'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
-                                        'Βήμα 1': scores.get('step1', 0),
-                                        'Βήμα 2': scores.get('step2', 0),
-                                        'Βήμα 3': scores.get('step3', 0),
-                                        'Βήμα 4': scores.get('step4', 0),
-                                        'Βήμα 5': scores.get('step5', 0),
-                                        'Βήμα 6': scores.get('step6', 0),
-                                        '🏆 ΤΕΛΙΚΟ SCORE': scores.get('final', 0)
-                                    })
-                            
-                            if scenario_comparison:
-                                comparison_df = pd.DataFrame(scenario_comparison)
-                                
-                                # Highlight best scenario (lowest score)
-                                best_score = comparison_df['🏆 ΤΕΛΙΚΟ SCORE'].min()
-                                best_scenario = comparison_df[comparison_df['🏆 ΤΕΛΙΚΟ SCORE'] == best_score]['Σενάριο'].iloc[0]
-                                
-                                st.success(f"🥇 **Καλύτερο Σενάριο:** {best_scenario} (Score: {best_score})")
 """
 Streamlit App - Σύστημα Κατανομής Μαθητών Α' Δημοτικού
 Ολοκληρωμένη εφαρμογή σύμφωνα με τις προδιαγραφές
@@ -32,6 +5,7 @@ Streamlit App - Σύστημα Κατανομής Μαθητών Α' Δημοτ�
 """
 
 import streamlit as st
+import base64
 import pandas as pd
 import numpy as np
 import zipfile
@@ -53,12 +27,14 @@ except ImportError:
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 
 # --- Fixed footer logo (bottom-right, ~1cm) ---
 def render_fixed_logo():
     try:
-        logo_bytes = st.session_state.get("footer_logo_png", None)
+        logo_bytes = st.session_state.get("footer_logo_png")
         if not logo_bytes:
             return
         b64 = base64.b64encode(logo_bytes).decode("utf-8")
@@ -73,10 +49,8 @@ def render_fixed_logo():
         </style>
         <img class="fixed-logo-img" src="data:image/png;base64,{b64}" width="140"/>
         """, unsafe_allow_html=True)
-    except Exception as _e:
+    except Exception:
         pass
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
 
 # Ρύθμιση σελίδας
 st.set_page_config(
@@ -441,6 +415,67 @@ def display_data_summary(df):
 
 # Core Student Distribution Class
 class StudentDistributor:
+
+    def run_distribution(self, num_scenarios=3):
+            """Εκτέλεση πλήρους κατανομής με score calculation"""
+            scenario_scores = {}
+        
+            for scenario in range(1, num_scenarios + 1):
+                scenario_data = {}
+            
+                # Execute all 7 steps
+                step1 = self.step1_population_balance(scenario)
+                scenario_data[f'ΒΗΜΑ1_ΣΕΝΑΡΙΟ_{scenario}'] = step1
+                score1 = self.calculate_scenario_score(step1)
+            
+                step2 = self.step2_gender_balance(scenario, step1)
+                scenario_data[f'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_{scenario}'] = step2
+                score2 = self.calculate_scenario_score(step2)
+            
+                step3 = self.step3_teacher_children(scenario, step2)
+                scenario_data[f'ΒΗΜΑ3_ΣΕΝΑΡΙΟ_{scenario}'] = step3
+                score3 = self.calculate_scenario_score(step3)
+            
+                step4 = self.step4_active_students(scenario, step3)
+                scenario_data[f'ΒΗΜΑ4_ΣΕΝΑΡΙΟ_{scenario}'] = step4
+                score4 = self.calculate_scenario_score(step4)
+            
+                step5 = self.step5_special_needs(scenario, step4)
+                scenario_data[f'ΒΗΜΑ5_ΣΕΝΑΡΙΟ_{scenario}'] = step5
+                score5 = self.calculate_scenario_score(step5)
+            
+                step6 = self.step6_friendships(scenario, step5)
+                scenario_data[f'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario}'] = step6
+                score6 = self.calculate_scenario_score(step6)
+            
+                step7 = self.step7_final_conflicts(scenario, step6)
+                final_score = self.calculate_scenario_score(step7)
+            
+                # Store scenario with all step scores
+                self.scenarios[scenario] = {
+                    'data': scenario_data,
+                    'final': step7,
+                    'scores': {
+                        'step1': score1,
+                        'step2': score2,
+                        'step3': score3,
+                        'step4': score4,
+                        'step5': score5,
+                        'step6': score6,
+                        'final': final_score
+                    }
+                }
+            
+                scenario_scores[scenario] = final_score
+        
+            # Pick best scenario (lowest score is best)
+            best_scenario = min(scenario_scores.keys(), key=lambda k: scenario_scores[k])
+            final_assignment = self.scenarios[best_scenario]['final']
+        
+            # Add final assignment to data
+            self.data['ΤΜΗΜΑ'] = final_assignment
+        
+            return self.data, self.scenarios
     def __init__(self, data):
         self.data = data.copy()
         self.num_classes = auto_num_classes(data)
@@ -822,66 +857,6 @@ class StudentDistributor:
                 else:
                     break
         return assignment
-def run_distribution(self, num_scenarios=3):
-        """Εκτέλεση πλήρους κατανομής με score calculation"""
-        scenario_scores = {}
-        
-        for scenario in range(1, num_scenarios + 1):
-            scenario_data = {}
-            
-            # Execute all 7 steps
-            step1 = self.step1_population_balance(scenario)
-            scenario_data[f'ΒΗΜΑ1_ΣΕΝΑΡΙΟ_{scenario}'] = step1
-            score1 = self.calculate_scenario_score(step1)
-            
-            step2 = self.step2_gender_balance(scenario, step1)
-            scenario_data[f'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_{scenario}'] = step2
-            score2 = self.calculate_scenario_score(step2)
-            
-            step3 = self.step3_teacher_children(scenario, step2)
-            scenario_data[f'ΒΗΜΑ3_ΣΕΝΑΡΙΟ_{scenario}'] = step3
-            score3 = self.calculate_scenario_score(step3)
-            
-            step4 = self.step4_active_students(scenario, step3)
-            scenario_data[f'ΒΗΜΑ4_ΣΕΝΑΡΙΟ_{scenario}'] = step4
-            score4 = self.calculate_scenario_score(step4)
-            
-            step5 = self.step5_special_needs(scenario, step4)
-            scenario_data[f'ΒΗΜΑ5_ΣΕΝΑΡΙΟ_{scenario}'] = step5
-            score5 = self.calculate_scenario_score(step5)
-            
-            step6 = self.step6_friendships(scenario, step5)
-            scenario_data[f'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario}'] = step6
-            score6 = self.calculate_scenario_score(step6)
-            
-            step7 = self.step7_final_conflicts(scenario, step6)
-            final_score = self.calculate_scenario_score(step7)
-            
-            # Store scenario with all step scores
-            self.scenarios[scenario] = {
-                'data': scenario_data,
-                'final': step7,
-                'scores': {
-                    'step1': score1,
-                    'step2': score2,
-                    'step3': score3,
-                    'step4': score4,
-                    'step5': score5,
-                    'step6': score6,
-                    'final': final_score
-                }
-            }
-            
-            scenario_scores[scenario] = final_score
-        
-        # Pick best scenario (lowest score is best)
-        best_scenario = min(scenario_scores.keys(), key=lambda k: scenario_scores[k])
-        final_assignment = self.scenarios[best_scenario]['final']
-        
-        # Add final assignment to data
-        self.data['ΤΜΗΜΑ'] = final_assignment
-        
-        return self.data, self.scenarios
     
     def calculate_statistics(self):
         """Υπολογισμός στατιστικών ανά τμήμα"""
