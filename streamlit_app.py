@@ -68,6 +68,7 @@ def auto_num_classes(df, override=None, min_classes=2):
     N = int(len(df)) if df is not None else 0
     return max(min_classes, int(ceil(N/25)))
 
+
 def display_data_summary(df):
     import pandas as pd
     st.subheader("📊 Περίληψη Δεδομένων")
@@ -76,9 +77,25 @@ def display_data_summary(df):
         return
 
     total = int(len(df))
+
     boys = int((df['ΦΥΛΟ'] == 'Α').sum()) if 'ΦΥΛΟ' in df.columns else 0
     girls = int((df['ΦΥΛΟ'] == 'Κ').sum()) if 'ΦΥΛΟ' in df.columns else 0
-    teachers = int((df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'] == 'Ν').sum()) if 'ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ' in df.columns else 0
+
+    # Υπολογισμός παιδιών εκπαιδευτικών με κανονικοποίηση τιμών
+    if 'ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ' in df.columns:
+        col_norm = (
+            df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .replace({
+                'NAI':'Ν','ΝΑΙ':'Ν','N':'Ν','YES':'Ν','Y':'Ν','TRUE':'Ν','1':'Ν',
+                'OXI':'Ο','ΟΧΙ':'Ο','O':'Ο','NO':'Ο','FALSE':'Ο','0':'Ο','': 'Ο'
+            })
+        )
+        teachers = int((col_norm == 'Ν').sum())
+    else:
+        teachers = 0
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Συνολικοί Μαθητές", total)
@@ -86,6 +103,7 @@ def display_data_summary(df):
     c3.metric("Κορίτσια", girls)
     c4.metric("Παιδιά Εκπαιδευτικών", teachers)
 
+    # Προαιρετικό γράφημα με Plotly
     if 'ΦΥΛΟ' in df.columns and PLOTLY_AVAILABLE:
         vals, names = [], []
         if boys > 0: vals.append(boys); names.append("Αγόρια")
@@ -93,7 +111,6 @@ def display_data_summary(df):
         if vals:
             fig = px.pie(values=vals, names=names, title="Κατανομή Φύλου")
             st.plotly_chart(fig, use_container_width=True)
-# --- end helpers ---
 
 
 def init_session_state():
