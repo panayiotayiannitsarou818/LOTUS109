@@ -1,177 +1,302 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import math
-import io
-import zipfile
-import traceback
-from datetime import datetime
-from collections import defaultdict
 
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    PLOTLY_AVAILABLE = True
-except ImportError:
-    PLOTLY_AVAILABLE = False
+# Main Application Functions
+def show_main_app():
+    """Κύρια εφαρμογή"""
+    st.markdown("<h1 class='main-header'>🎓 Κατανομή Μαθητών Α' Δημοτικού</h1>", unsafe_allow_html=True)
+    
+    # Main Navigation Buttons
+    st.markdown("""
+    <div style="display: flex; justify-content: center; gap: 1rem; margin: 2rem 0; flex-wrap: wrap;">
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("📤 Εισαγωγή Excel", key="nav_upload", use_container_width=True):
+            st.session_state.current_section = 'upload'
+            st.rerun()
+    
+    with col2:
+        if st.button("⚡ Εκτέλεση Κατανομής", key="nav_execute", use_container_width=True):
+            st.session_state.current_section = 'execute'
+            st.rerun()
+    
+    with col3:
+        if st.button("💾 Εξαγωγή Αποτελέσματος", key="nav_export", use_container_width=True):
+            st.session_state.current_section = 'export'
+            st.rerun()
+    
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        if st.button("📊 Αναλυτικά Βήματα", key="nav_details", use_container_width=True):
+            st.session_state.current_section = 'details'
+            st.rerun()
+    
+    with col5:
+        if st.button("🔄 Επανεκκίνηση", key="nav_restart", use_container_width=True):
+            st.session_state.current_section = 'restart'
+            st.rerun()
+    
+    with col6:
+        if st.button("⚙️ Ρυθμίσεις", key="nav_settings", use_container_width=True):
+            st.session_state.current_section = 'settings'
+            st.rerun()
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Content based on current section
+    current_section = st.session_state.get('current_section', 'upload')
+    
+    if current_section == 'upload':
+        show_upload_section()
+    elif current_section == 'execute':
+        show_execute_section()
+    elif current_section == 'export':
+        show_export_section()
+    elif current_section == 'details':
+        show_details_section()
+    elif current_section == 'restart':
+        show_restart_section()
+    elif current_section == 'settings':
+        show_settings_section()
+    else:
+        show_upload_section()
 
-try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
-
-# Ρύθμιση σελίδας
-st.set_page_config(
-    page_title="Κατανομή Μαθητών Α' Δημοτικού",
-    page_icon="🎓",
-    layout="wide"
-)
-
-# CSS Styling
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        color: #2E86AB;
-        font-size: 2.5rem;
-        margin-bottom: 2rem;
-        font-weight: bold;
-    }
-    
-    .step-header {
-        background: linear-gradient(90deg, #2E86AB, #A23B72);
-        color: white;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        margin: 1rem 0;
-        font-weight: bold;
-    }
-    
-    .main-buttons {
-        display: flex;
-        justify-content: center;
-        gap: 1rem;
-        margin: 2rem 0;
-        flex-wrap: wrap;
-    }
-    
-    .main-button {
-        background: #2E86AB;
-        color: white;
-        border: none;
-        padding: 1rem 2rem;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: bold;
-        min-width: 180px;
-        text-align: center;
-    }
-    
-    .main-button:hover {
-        background: #A23B72;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-    }
-    
-    .stats-container {
-        background: #f8f9fa;
-        padding: 2rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    }
-    
-    .footer-logo {
-        position: fixed;
-        bottom: 1cm;
-        right: 1cm;
-        background: white;
-        padding: 0.5rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-        z-index: 1000;
-        font-size: 0.8rem;
-        color: #666;
-        border: 1px solid #ddd;
-    }
-    
-    .copyright-text {
-        text-align: center;
-        color: #666;
-        font-size: 0.9rem;
-        margin-top: 2rem;
-        padding: 1rem;
-        border-top: 1px solid #ddd;
-    }
-    
-    .success-box {
-        background: #d4edda;
-        border: 1px solid #c3e6cb;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-    
-    .warning-box {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-    
-    .error-box {
-        background: #f8d7da;
-        border: 1px solid #f5c6cb;
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Footer Logo
-st.markdown("""
-<div class="footer-logo">
-    © Γιαννίτσαρου Παναγιώτα<br>
-    📧 panayiotayiannitsarou@gmail.com
-</div>
-""", unsafe_allow_html=True)
-
-# Session State Initialization
-def init_session_state():
-    """Αρχικοποίηση session state"""
-    defaults = {
-        'authenticated': False,
-        'terms_accepted': False,
-        'app_enabled': False,
-        'data': None,
-        'current_section': 'login',
-        'step_results': {},
-        'final_results': None,
-        'statistics': None,
-        'detailed_steps': None
-    }
-    
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-# Authentication System
-def show_login():
-    """Σελίδα εισόδου με κωδικό"""
-    st.markdown("<h1 class='main-header'>🔒 Κλείδωμα Πρόσβασης</h1>", unsafe_allow_html=True)
+def show_upload_section():
+    """Ενότητα φόρτωσης Excel"""
+    st.markdown("<div class='step-header'>📤 Εισαγωγή Δεδομένων Excel</div>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("### Εισάγετε τον κωδικό πρόσβασης")
+        st.markdown("""
+        <div class="stats-container">
+        <h4 style="color: #2E86AB;">📋 Απαιτούμενες Στήλες Excel:</h4>
+        <ul>
+        <li><strong>ΟΝΟΜΑ</strong> - Όνομα μαθητή</li>
+        <li><strong>ΦΥΛΟ</strong> - Α (Αγόρι) ή Κ (Κορίτσι)</li>
+        <li><strong>ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
+        <li><strong>ΖΩΗΡΟΣ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
+        <li><strong>ΙΔΙΑΙΤΕΡΟΤΗΤΑ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
+        <li><strong>ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
+        <li><strong>ΦΙΛΟΙ</strong> - Ονόματα χωρισμένα με κόμμα</li>
+        <li><strong>ΣΥΓΚΡΟΥΣΗ</strong> - Ονόματα χωρισμένα με κόμμα</li>
+        <li><strong>ΤΜΗΜΑ</strong> - Αρχικά κενή</li>
+        </ul>
+        </div>
+        """, unsafe_allow_html=True)
         
-        password = st.text_input("Κωδικός:", type="password", key="login_password")
+        # File uploader
+        uploaded_file = st.file_uploader(
+            "Επιλέξτε αρχείο Excel (.xlsx)",
+            type=['xlsx'],
+            key="main_file_upload"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                with st.spinner("Φόρτωση και επικύρωση δεδομένων..."):
+                    # Load Excel file
+                    df = pd.read_excel(uploaded_file)
+                    
+                    # Validate columns
+                    missing_columns = validate_excel_columns(df)
+                    
+                    if missing_columns:
+                        st.markdown(f"""
+                        <div class="error-box">
+                        <h4>❌ Λείπουν απαιτούμενες στήλες:</h4>
+                        <p>{', '.join(missing_columns)}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        # Normalize data
+                        df = normalize_data(df)
+                        st.session_state.data = df
+                        
+                        st.markdown("""
+                        <div class="success-box">
+                        <h4>✅ Το αρχείο φορτώθηκε επιτυχώς!</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Display data summary
+                        display_data_summary(df)
+                        
+                        # Preview data
+                        with st.expander("👁️ Προεπισκόπηση Δεδομένων"):
+                            st.dataframe(df.head(10), use_container_width=True)
+                        
+                        # Continue button
+                        if st.button("➡️ Συνέχεια στην Εκτέλεση", key="continue_to_execute", use_container_width=True):
+                            st.session_state.current_section = 'execute'
+                            st.rerun()
+                            
+            except Exception as e:
+                st.markdown(f"""
+                <div class="error-box">
+                <h4>❌ Σφάλμα φόρτωσης αρχείου:</h4>
+                <p>{str(e)}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+def show_execute_section():
+    """Ενότητα εκτέλεσης κατανομής"""
+    st.markdown("<div class='step-header'>⚡ Εκτέλεση Κατανομής Μαθητών</div>", unsafe_allow_html=True)
+    
+    if st.session_state.data is None:
+        st.markdown("""
+        <div class="warning-box">
+        <h4>⚠️ Δεν έχουν φορτωθεί δεδομένα</h4>
+        <p>Παρακαλώ φορτώστε πρώτα το αρχείο Excel από την ενότητα "Εισαγωγή Excel".</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("📤 Πήγαινε στην Εισαγωγή Excel", key="go_to_upload", use_container_width=True):
+            st.session_state.current_section = 'upload'
+            st.rerun()
+        return
+    
+    # Display current data info
+    total_students = len(st.session_state.data)
+    num_classes = auto_num_classes(st.session_state.data)
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("👥 Συνολικοί Μαθητές", total_students)
+    col2.metric("🎯 Απαιτούμενα Τμήματα", num_classes)
+    col3.metric("📊 Μέγιστος αριθμός/τμήμα", "25")
+    
+    st.markdown("---")
+    
+    # Execution settings
+    col1, col2 = st.columns(2)
+    with col1:
+        num_scenarios = st.selectbox(
+            "🔢 Αριθμός Σεναρίων:",
+            options=[1, 2, 3, 4, 5],
+            index=2,
+            help="Περισσότερα σενάρια = καλύτερα αποτελέσματα (αλλά πιο αργή εκτέλεση)"
+        )
+    
+    with col2:
+        auto_export = st.checkbox(
+            "📁 Αυτόματη εξαγωγή μετά την κατανομή",
+            value=True,
+            help="Θα δημιουργηθούν αυτόματα τα αρχεία εξαγωγής"
+        )
+    
+    st.markdown("---")
+    
+    # Main execution button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀 ΕΚΚΙΝΗΣΗ ΚΑΤΑΝΟΜΗΣ", key="start_distribution", use_container_width=True):
+            
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            try:
+                status_text.text("🔄 Αρχικοποίηση αλγορίθμου κατανομής...")
+                progress_bar.progress(10)
+                
+                # Initialize distributor
+                distributor = StudentDistributor(st.session_state.data)
+                
+                status_text.text("⚡ Εκτέλεση 7 βημάτων κατανομής...")
+                progress_bar.progress(30)
+                
+                # Run distribution
+                final_data, scenarios = distributor.run_distribution(num_scenarios)
+                
+                status_text.text("📊 Υπολογισμός στατιστικών...")
+                progress_bar.progress(70)
+                
+                # Calculate statistics
+                statistics = distributor.calculate_statistics()
+                
+                status_text.text("💾 Αποθήκευση αποτελεσμάτων...")
+                progress_bar.progress(90)
+                
+                # Store results
+                st.session_state.final_results = final_data
+                st.session_state.statistics = statistics
+                st.session_state.detailed_steps = scenarios
+                
+                progress_bar.progress(100)
+                status_text.text("✅ Κατανομή ολοκληρώθηκε επιτυχώς!")
+                
+                st.success("🎉 Η κατανομή των μαθητών ολοκληρώθηκε με επιτυχία!")
+                
+                # Show results summary
+                st.markdown("### 📊 Περίληψη Αποτελεσμάτων")
+                
+                if statistics is not None and len(statistics) > 0:
+                    st.dataframe(statistics, use_container_width=True)
+                    
+                    # Visual statistics
+                    if PLOTLY_AVAILABLE:
+                        fig_students = px.bar(
+                            statistics, 
+                            x='ΤΜΗΜΑ', 
+                            y='Σύνολο',
+                            title='Πληθυσμός ανά Τμήμα',
+                            color='Σύνολο',
+                            color_continuous_scale='Blues'
+                        )
+                        st.plotly_chart(fig_students, use_container_width=True)
+                        
+                        fig_gender = px.bar(
+                            statistics,
+                            x='ΤΜΗΜΑ',
+                            y=['ΑΓΟΡΙΑ', 'ΚΟΡΙΤΣΙΑ'],
+                            title='Κατανομή Φύλου ανά Τμήμα',
+                            barmode='group'
+                        )
+                        st.plotly_chart(fig_gender, use_container_width=True)
+                
+                # Navigation buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Εξαγωγή Αποτελεσμάτων", key="go_to_export", use_container_width=True):
+                        st.session_state.current_section = 'export'
+                        st.rerun()
+                
+                with col2:
+                    if st.button("📊 Αναλυτικά Βήματα", key="go_to_details", use_container_width=True):
+                        st.session_state.current_section = 'details'
+                        st.rerun()
+                        
+                # Auto export if enabled
+                if auto_export:
+                    st.session_state.current_section = 'export'
+                    st.rerun()
+                    
+            except Exception as e:
+                progress_bar.progress(0)
+                status_text.text("")
+                st.markdown(f"""
+                <div class="error-box">
+                <h4>❌ Σφάλμα κατά την εκτέλεση:</h4>
+                <p>{str(e)}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                with st.expander("🔍 Τεχνικές Λεπτομέρειες Σφάλματος"):
+                    st.code(traceback.format_exc())
+
+def show_export_section():
+    """
+    ΔΙΟΡΘΩΜΕΝΗ ΕΚΔΟΣΗ:
+    Ενότητα εξαγωγής αποτελεσμάτων - ΑΦΑΙΡΩ ΕΝΤΕΛΩΣ ΠΛΗΡΕΣ, ΜΟΝΟ ΑΝΑΛΥΤΙΚΑ
+    """
+    st.markdown("<div class='step-header'>💾 Εξαγωγή Αποτελεσμάτων</div>", unsafe_allow_html=True)
+    
+    if st.session_state.final_results is None:
+        st.markdown("""
+        <div class="warning-box">
+        <h4>⚠️ Δεν υπάρχουν αποτελέσματα προς εξαγωγή</h4>
+        <p>Παρακαλώ εκτελέστε πρώτα την κατανομή των μαθητών.</p>
+        </div>
+        """, unsafe_allow_html=True)
         
         if st.button("⚡ Πήγαινε στην Εκτέλεση", key="go_to_execute_from_export", use_container_width=True):
             st.session_state.current_section = 'execute'
@@ -345,7 +470,7 @@ def show_details_section():
     st.info("Σε κάθε στήλη εμφανίζονται οι νέες τοποθετήσεις του βήματος και οι τοποθετήσεις του αμέσως προηγούμενου βήματος. Τα υπόλοιπα κελιά μένουν κενά.")
     
     for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-        st.markdown(f"#### 📋 Σενάριο {scenario_num} — Αναλυτική Προβολή")
+        st.markdown(f"#### 📋 Σενάριο {scenario_num} – Αναλυτική Προβολή")
         df_view = build_step_columns_with_prev(st.session_state.data, scenario_data, scenario_num, base_columns=['ΟΝΟΜΑ'])
         st.dataframe(df_view, use_container_width=True, hide_index=True)
         
@@ -356,8 +481,8 @@ def show_details_section():
         st.markdown("---")
     
     step_descriptions = {
-        'ΒΗΜΑ1': '🎯 Ισορροπία Πληθυσμού - Διαίρεση σε τμήματα ≤25 μαθητών',
-        'ΒΗΜΑ2': '⚖️ Ισορροπία Φύλου - Κατανομή αγοριών/κοριτσιών', 
+        'ΒΗΜΑ1': '🎯 Ισοκατανομή Πληθυσμού - Διαίρεση σε τμήματα ≤25 μαθητών',
+        'ΒΗΜΑ2': '⚖️ Ισοκατανομή Φύλου - Κατανομή αγοριών/κοριτσιών', 
         'ΒΗΜΑ3': '🏫 Παιδιά Εκπαιδευτικών - Ισόποση κατανομή',
         'ΒΗΜΑ4': '⚡ Ζωηροί Μαθητές - Ισόποση κατανομή',
         'ΒΗΜΑ5': '🎨 Ιδιαιτερότητες - Ισόποση κατανομή', 
@@ -429,7 +554,7 @@ def show_restart_section():
         <li>Τα αποτελέσματα κατανομής</li>
         <li>Τα στατιστικά και αναλυτικά βήματα</li>
         </ul>
-        <p><strong>Η ενέργεια αυτή δεν μπορεί να αναιρεθεί!</strong></p>
+        <p><strong>Η ενέργεια αυτή δεν μπορεί να ανακληθεί!</strong></p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -635,7 +760,182 @@ def main():
 
 # Run the application
 if __name__ == "__main__":
-    main()button("🔑 Είσοδος", key="login_btn", use_container_width=True):
+    main()import streamlit as st
+import pandas as pd
+import numpy as np
+import math
+import io
+import zipfile
+import traceback
+from datetime import datetime
+from collections import defaultdict
+
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
+# Ρύθμιση σελίδας
+st.set_page_config(
+    page_title="Κατανομή Μαθητών Α' Δημοτικού",
+    page_icon="🎓",
+    layout="wide"
+)
+
+# CSS Styling
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        color: #2E86AB;
+        font-size: 2.5rem;
+        margin-bottom: 2rem;
+        font-weight: bold;
+    }
+    
+    .step-header {
+        background: linear-gradient(90deg, #2E86AB, #A23B72);
+        color: white;
+        padding: 1rem;
+        border-radius: 10px;
+        text-align: center;
+        margin: 1rem 0;
+        font-weight: bold;
+    }
+    
+    .main-buttons {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        margin: 2rem 0;
+        flex-wrap: wrap;
+    }
+    
+    .main-button {
+        background: #2E86AB;
+        color: white;
+        border: none;
+        padding: 1rem 2rem;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: bold;
+        min-width: 180px;
+        text-align: center;
+    }
+    
+    .main-button:hover {
+        background: #A23B72;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    
+    .stats-container {
+        background: #f8f9fa;
+        padding: 2rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .footer-logo {
+        position: fixed;
+        bottom: 1cm;
+        right: 1cm;
+        background: white;
+        padding: 0.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        z-index: 1000;
+        font-size: 0.8rem;
+        color: #666;
+        border: 1px solid #ddd;
+    }
+    
+    .copyright-text {
+        text-align: center;
+        color: #666;
+        font-size: 0.9rem;
+        margin-top: 2rem;
+        padding: 1rem;
+        border-top: 1px solid #ddd;
+    }
+    
+    .success-box {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
+    
+    .warning-box {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
+    
+    .error-box {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Footer Logo
+st.markdown("""
+<div class="footer-logo">
+    © Γιαννίτσαρου Παναγιώτα<br>
+    📧 panayiotayiannitsarou@gmail.com
+</div>
+""", unsafe_allow_html=True)
+
+# Session State Initialization
+def init_session_state():
+    """Αρχικοποίηση session state"""
+    defaults = {
+        'authenticated': False,
+        'terms_accepted': False,
+        'app_enabled': False,
+        'data': None,
+        'current_section': 'login',
+        'step_results': {},
+        'final_results': None,
+        'statistics': None,
+        'detailed_steps': None
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+# Authentication System
+def show_login():
+    """Σελίδα εισόδου με κωδικό"""
+    st.markdown("<h1 class='main-header'>🔒 Κλείδωμα Πρόσβασης</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### Εισάγετε τον κωδικό πρόσβασης")
+        
+        password = st.text_input("Κωδικός:", type="password", key="login_password")
+        
+        if st.button("🔑 Είσοδος", key="login_btn", use_container_width=True):
             if password == "katanomi2025":
                 st.session_state.authenticated = True
                 st.session_state.current_section = 'terms'
@@ -724,7 +1024,7 @@ def show_app_control():
         else:
             st.markdown("""
             <div class="warning-box">
-            <h4>🔴 Κατάσταση: ΑΠΕΝΕΡΓΟΠΟΙΗΜΕΝΗ</h4>
+            <h4>🔴 Κατάσταση: ΑΠΕΝΕΡΓΟΠΟΙΗΜΈΝΗ</h4>
             <p>Η εφαρμογή είναι απενεργοποιημένη. Πατήστε το κουμπί για ενεργοποίηση.</p>
             </div>
             """, unsafe_allow_html=True)
@@ -758,7 +1058,7 @@ def show_app_control():
 def build_step_columns_with_prev(dataframe, scenario_dict, scenario_num, base_columns=None):
     '''
     ΔΙΟΡΘΩΜΕΝΗ ΕΚΔΟΣΗ:
-    Κατασκευάζει στήλες ΒΗΜΑx_ΣΕΝΑΡΙΟ_{n} έτσι ώστε:
+    Κατασκευάζει στήλες ΒΗΜΑ{x}_ΣΕΝΑΡΙΟ_{n} έτσι ώστε:
     • Σε κάθε στήλη να φαίνονται ΜΟΝΟ (α) οι νέες τοποθετήσεις του τρέχοντος βήματος
       ΚΑΙ (β) οι τοποθετήσεις του ΑΜΕΣΩΣ προηγούμενου βήματος.
     • Τα υπόλοιπα κελιά μένουν κενά.
@@ -931,7 +1231,7 @@ class StudentDistributor:
         self.scenarios = {}
         
     def step1_population_balance(self, scenario_num):
-        """Βήμα 1: Ισορροπία Πληθυσμού"""
+        """Βήμα 1: Ισοκατανομή Πληθυσμού"""
         total_students = len(self.data)
         
         # Υπολογισμός αριθμού τμημάτων: ⌈N/25⌉
@@ -957,7 +1257,7 @@ class StudentDistributor:
         return assignment
     
     def step2_gender_balance(self, scenario_num, previous_step):
-        """Βήμα 2: Ισορροπία Φύλου"""
+        """Βήμα 2: Ισοκατανομή Φύλου"""
         result = previous_step.copy()
         
         # Group by class
@@ -995,6 +1295,28 @@ class StudentDistributor:
         for idx, row in self.data.iterrows():
             if row.get('ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ') == 'Ν':
                 teacher_children.append(idx)
+        
+        # Δυναμικά ονόματα τμημάτων
+        if self.num_classes <= 10:
+            class_names = [f'Α{i+1}' for i in range(self.num_classes)]
+        else:
+            class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
+            
+        # Distribute teacher children evenly across classes
+        for i, child_idx in enumerate(teacher_children):
+            target_class = class_names[i % self.num_classes]
+            result[child_idx] = target_class
+        
+        return result
+    
+    def step4_active_students(self, scenario_num, previous_step):
+        """Βήμα 4: Κατανομή Ζωηρών Μαθητών"""
+        result = previous_step.copy()
+        
+        active_students = []
+        for idx, row in self.data.iterrows():
+            if row.get('ΖΩΗΡΟΣ') == 'Ν':
+                active_students.append(idx)
         
         # Δυναμικά ονόματα τμημάτων
         if self.num_classes <= 10:
@@ -1299,326 +1621,3 @@ class StudentDistributor:
             stats.append(stat_row)
         
         return pd.DataFrame(stats)
-
-# Main Application Functions
-def show_main_app():
-    """Κύρια εφαρμογή"""
-    st.markdown("<h1 class='main-header'>🎓 Κατανομή Μαθητών Α' Δημοτικού</h1>", unsafe_allow_html=True)
-    
-    # Main Navigation Buttons
-    st.markdown("""
-    <div style="display: flex; justify-content: center; gap: 1rem; margin: 2rem 0; flex-wrap: wrap;">
-    """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("📤 Εισαγωγή Excel", key="nav_upload", use_container_width=True):
-            st.session_state.current_section = 'upload'
-            st.rerun()
-    
-    with col2:
-        if st.button("⚡ Εκτέλεση Κατανομής", key="nav_execute", use_container_width=True):
-            st.session_state.current_section = 'execute'
-            st.rerun()
-    
-    with col3:
-        if st.button("💾 Εξαγωγή Αποτελέσματος", key="nav_export", use_container_width=True):
-            st.session_state.current_section = 'export'
-            st.rerun()
-    
-    col4, col5, col6 = st.columns(3)
-    with col4:
-        if st.button("📊 Αναλυτικά Βήματα", key="nav_details", use_container_width=True):
-            st.session_state.current_section = 'details'
-            st.rerun()
-    
-    with col5:
-        if st.button("🔄 Επανεκκίνηση", key="nav_restart", use_container_width=True):
-            st.session_state.current_section = 'restart'
-            st.rerun()
-    
-    with col6:
-        if st.button("⚙️ Ρυθμίσεις", key="nav_settings", use_container_width=True):
-            st.session_state.current_section = 'settings'
-            st.rerun()
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Content based on current section
-    current_section = st.session_state.get('current_section', 'upload')
-    
-    if current_section == 'upload':
-        show_upload_section()
-    elif current_section == 'execute':
-        show_execute_section()
-    elif current_section == 'export':
-        show_export_section()
-    elif current_section == 'details':
-        show_details_section()
-    elif current_section == 'restart':
-        show_restart_section()
-    elif current_section == 'settings':
-        show_settings_section()
-    else:
-        show_upload_section()
-
-def show_upload_section():
-    """Ενότητα φόρτωσης Excel"""
-    st.markdown("<div class='step-header'>📤 Εισαγωγή Δεδομένων Excel</div>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("""
-        <div class="stats-container">
-        <h4 style="color: #2E86AB;">📋 Απαιτούμενες Στήλες Excel:</h4>
-        <ul>
-        <li><strong>ΟΝΟΜΑ</strong> - Όνομα μαθητή</li>
-        <li><strong>ΦΥΛΟ</strong> - Α (Αγόρι) ή Κ (Κορίτσι)</li>
-        <li><strong>ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
-        <li><strong>ΖΩΗΡΟΣ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
-        <li><strong>ΙΔΙΑΙΤΕΡΟΤΗΤΑ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
-        <li><strong>ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ</strong> - Ν (Ναι) ή Ο (Όχι)</li>
-        <li><strong>ΦΙΛΟΙ</strong> - Ονόματα χωρισμένα με κόμμα</li>
-        <li><strong>ΣΥΓΚΡΟΥΣΗ</strong> - Ονόματα χωρισμένα με κόμμα</li>
-        <li><strong>ΤΜΗΜΑ</strong> - Αρχικά κενή</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # File uploader
-        uploaded_file = st.file_uploader(
-            "Επιλέξτε αρχείο Excel (.xlsx)",
-            type=['xlsx'],
-            key="main_file_upload"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                with st.spinner("Φόρτωση και επικύρωση δεδομένων..."):
-                    # Load Excel file
-                    df = pd.read_excel(uploaded_file)
-                    
-                    # Validate columns
-                    missing_columns = validate_excel_columns(df)
-                    
-                    if missing_columns:
-                        st.markdown(f"""
-                        <div class="error-box">
-                        <h4>❌ Λείπουν απαιτούμενες στήλες:</h4>
-                        <p>{', '.join(missing_columns)}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        # Normalize data
-                        df = normalize_data(df)
-                        st.session_state.data = df
-                        
-                        st.markdown("""
-                        <div class="success-box">
-                        <h4>✅ Το αρχείο φορτώθηκε επιτυχώς!</h4>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Display data summary
-                        display_data_summary(df)
-                        
-                        # Preview data
-                        with st.expander("👁️ Προεπισκόπηση Δεδομένων"):
-                            st.dataframe(df.head(10), use_container_width=True)
-                        
-                        # Continue button
-                        if st.button("➡️ Συνέχεια στην Εκτέλεση", key="continue_to_execute", use_container_width=True):
-                            st.session_state.current_section = 'execute'
-                            st.rerun()
-                            
-            except Exception as e:
-                st.markdown(f"""
-                <div class="error-box">
-                <h4>❌ Σφάλμα φόρτωσης αρχείου:</h4>
-                <p>{str(e)}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-def show_execute_section():
-    """Ενότητα εκτέλεσης κατανομής"""
-    st.markdown("<div class='step-header'>⚡ Εκτέλεση Κατανομής Μαθητών</div>", unsafe_allow_html=True)
-    
-    if st.session_state.data is None:
-        st.markdown("""
-        <div class="warning-box">
-        <h4>⚠️ Δεν έχουν φορτωθεί δεδομένα</h4>
-        <p>Παρακαλώ φορτώστε πρώτα το αρχείο Excel από την ενότητα "Εισαγωγή Excel".</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("📤 Πήγαινε στην Εισαγωγή Excel", key="go_to_upload", use_container_width=True):
-            st.session_state.current_section = 'upload'
-            st.rerun()
-        return
-    
-    # Display current data info
-    total_students = len(st.session_state.data)
-    num_classes = auto_num_classes(st.session_state.data)
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("👥 Συνολικοί Μαθητές", total_students)
-    col2.metric("🎯 Απαιτούμενα Τμήματα", num_classes)
-    col3.metric("📊 Μέγιστος αριθμός/τμήμα", "25")
-    
-    st.markdown("---")
-    
-    # Execution settings
-    col1, col2 = st.columns(2)
-    with col1:
-        num_scenarios = st.selectbox(
-            "🔢 Αριθμός Σεναρίων:",
-            options=[1, 2, 3, 4, 5],
-            index=2,
-            help="Περισσότερα σενάρια = καλύτερα αποτελέσματα (αλλά πιο αργή εκτέλεση)"
-        )
-    
-    with col2:
-        auto_export = st.checkbox(
-            "📁 Αυτόματη εξαγωγή μετά την κατανομή",
-            value=True,
-            help="Θα δημιουργηθούν αυτόματα τα αρχεία εξαγωγής"
-        )
-    
-    st.markdown("---")
-    
-    # Main execution button
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 ΕΚΚΙΝΗΣΗ ΚΑΤΑΝΟΜΗΣ", key="start_distribution", use_container_width=True):
-            
-            # Progress tracking
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            try:
-                status_text.text("🔄 Αρχικοποίηση αλγορίθμου κατανομής...")
-                progress_bar.progress(10)
-                
-                # Initialize distributor
-                distributor = StudentDistributor(st.session_state.data)
-                
-                status_text.text("⚡ Εκτέλεση 7 βημάτων κατανομής...")
-                progress_bar.progress(30)
-                
-                # Run distribution
-                final_data, scenarios = distributor.run_distribution(num_scenarios)
-                
-                status_text.text("📊 Υπολογισμός στατιστικών...")
-                progress_bar.progress(70)
-                
-                # Calculate statistics
-                statistics = distributor.calculate_statistics()
-                
-                status_text.text("💾 Αποθήκευση αποτελεσμάτων...")
-                progress_bar.progress(90)
-                
-                # Store results
-                st.session_state.final_results = final_data
-                st.session_state.statistics = statistics
-                st.session_state.detailed_steps = scenarios
-                
-                progress_bar.progress(100)
-                status_text.text("✅ Κατανομή ολοκληρώθηκε επιτυχώς!")
-                
-                st.success("🎉 Η κατανομή των μαθητών ολοκληρώθηκε με επιτυχία!")
-                
-                # Show results summary
-                st.markdown("### 📊 Περίληψη Αποτελεσμάτων")
-                
-                if statistics is not None and len(statistics) > 0:
-                    st.dataframe(statistics, use_container_width=True)
-                    
-                    # Visual statistics
-                    if PLOTLY_AVAILABLE:
-                        fig_students = px.bar(
-                            statistics, 
-                            x='ΤΜΗΜΑ', 
-                            y='Σύνολο',
-                            title='Πληθυσμός ανά Τμήμα',
-                            color='Σύνολο',
-                            color_continuous_scale='Blues'
-                        )
-                        st.plotly_chart(fig_students, use_container_width=True)
-                        
-                        fig_gender = px.bar(
-                            statistics,
-                            x='ΤΜΗΜΑ',
-                            y=['ΑΓΟΡΙΑ', 'ΚΟΡΙΤΣΙΑ'],
-                            title='Κατανομή Φύλου ανά Τμήμα',
-                            barmode='group'
-                        )
-                        st.plotly_chart(fig_gender, use_container_width=True)
-                
-                # Navigation buttons
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("💾 Εξαγωγή Αποτελεσμάτων", key="go_to_export", use_container_width=True):
-                        st.session_state.current_section = 'export'
-                        st.rerun()
-                
-                with col2:
-                    if st.button("📊 Αναλυτικά Βήματα", key="go_to_details", use_container_width=True):
-                        st.session_state.current_section = 'details'
-                        st.rerun()
-                        
-                # Auto export if enabled
-                if auto_export:
-                    st.session_state.current_section = 'export'
-                    st.rerun()
-                    
-            except Exception as e:
-                progress_bar.progress(0)
-                status_text.text("")
-                st.markdown(f"""
-                <div class="error-box">
-                <h4>❌ Σφάλμα κατά την εκτέλεση:</h4>
-                <p>{str(e)}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                with st.expander("🔍 Τεχνικές Λεπτομέρειες Σφάλματος"):
-                    st.code(traceback.format_exc())
-
-def show_export_section():
-    """
-    ΔΙΟΡΘΩΜΕΝΗ ΕΚΔΟΣΗ:
-    Ενότητα εξαγωγής αποτελεσμάτων - ΑΦΑΙΡΩ ΕΝΤΕΛΩΣ ΠΛΗΡΕΣ, ΜΟΝΟ ΑΝΑΛΥΤΙΚΑ
-    """
-    st.markdown("<div class='step-header'>💾 Εξαγωγή Αποτελεσμάτων</div>", unsafe_allow_html=True)
-    
-    if st.session_state.final_results is None:
-        st.markdown("""
-        <div class="warning-box">
-        <h4>⚠️ Δεν υπάρχουν αποτελέσματα προς εξαγωγή</h4>
-        <p>Παρακαλώ εκτελέστε πρώτα την κατανομή των μαθητών.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.10:
-            class_names = [f'Α{i+1}' for i in range(self.num_classes)]
-        else:
-            class_names = [f'ΤΜΗΜΑ_{i+1}' for i in range(self.num_classes)]
-            
-        # Distribute teacher children evenly across classes
-        for i, child_idx in enumerate(teacher_children):
-            target_class = class_names[i % self.num_classes]
-            result[child_idx] = target_class
-        
-        return result
-    
-    def step4_active_students(self, scenario_num, previous_step):
-        """Βήμα 4: Κατανομή Ζωηρών Μαθητών"""
-        result = previous_step.copy()
-        
-        active_students = []
-        for idx, row in self.data.iterrows():
-            if row.get('ΖΩΗΡΟΣ') == 'Ν':
-                active_students.append(idx)
-        
-        # Δυναμικά ονόματα τμημάτων
-        if self.num_classes <= 
