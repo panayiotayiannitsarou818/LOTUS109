@@ -331,10 +331,10 @@ def run_step1(df):
         
         teacher_kids = df[df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'] == 'Ν']
         if len(teacher_kids) <= 12:
-            sols, names = enumerate_all(df, top_k=3)
+            sols, names = enumerate_all(df, num_classes=num_classes, top_k=3)
         else:
             st.warning("Πολλά παιδιά εκπαιδευτικών (>12). Χρήση greedy approach.")
-            sols, names = enumerate_all(df, top_k=3)  # fallback
+            sols, names = enumerate_all(df, num_classes=num_classes, top_k=3)  # fallback
         
         status_text.text("Εγγραφή αποτελεσμάτων...")
         progress_bar.progress(75)
