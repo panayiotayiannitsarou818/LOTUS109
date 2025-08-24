@@ -34,18 +34,12 @@ except ImportError:
 
 # Import των modules (θα πρέπει να είναι στον ίδιο φάκελο)
 try:
-    from step_1_helpers_FIXED import load_and_normalize, enumerate_all, write_outputs
+    from step_1_paidia_ekp_FIXED import load_and_normalize, enumerate_all, write_outputs
     from step_2_zoiroi_idiaterotites_FIXED_v3_PATCHED import step2_apply_FIXED_v3
     from step3_amivaia_filia_FIXED import step3_run_all_from_step2
     from step4_filikoi_omades_beltiosi_FIXED import apply_step4_strict
     from step_5_ypoloipoi_mathites_FIXED_compat import apply_step5_to_all_scenarios
     from step_6_final_check_and_fix_PATCHED import apply_step6_to_step5_scenarios
-    \1
-# Optional extra filter for friendships; app works without it
-try:
-    from friendship_filters_fixed import filter_scenarios_fixed as _ff
-except Exception:
-    _ff = None
     
     from statistics_generator import generate_statistics_table, export_statistics_to_excel
 except ImportError as e:
@@ -59,12 +53,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-def infer_num_classes(df):
-    try:
-        return max(1, math.ceil(len(df)/25))
-    except Exception:
-        return 1
 
 def init_session_state():
     """Αρχικοποίηση session state variables"""
@@ -378,9 +366,7 @@ def run_step2(step1_results):
         
         try:
             df = step1_data['df']
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
+            num_classes = auto_num_classes(df)
             step1_col = step1_data['column']
             
             progress_bar.progress(50)
@@ -424,9 +410,7 @@ def run_step3(step2_results):
         
         try:
             df = step2_data['df']
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
+            num_classes = auto_num_classes(df)
             step2_col = step2_data['column']
             
             # Προσομοίωση Step 3 (χρήση του υπάρχοντος module)
@@ -458,9 +442,7 @@ def run_step4(step3_results):
         
         try:
             df = step3_data['df']
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
+            num_classes = auto_num_classes(df)
             step3_col = step3_data['column']
             
             progress_bar = st.progress(0)
@@ -515,9 +497,7 @@ def run_steps_5_6_7(step4_results):
         
         try:
             df = step4_data['df']
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
-    num_classes = infer_num_classes(df)
+            num_classes = auto_num_classes(df)
             step4_col = step4_data['column']
             
             # Step 5: Υπόλοιποι μαθητές
