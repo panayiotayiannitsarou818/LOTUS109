@@ -322,6 +322,7 @@ def run_step1(df):
     status_text = st.empty()
     
     try:
+        num_classes = auto_num_classes(df)
         status_text.text("Φόρτωση και κανονικοποίηση δεδομένων...")
         progress_bar.progress(25)
         
