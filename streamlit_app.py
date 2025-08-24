@@ -24,7 +24,7 @@
                                 best_score = comparison_df['🏆 ΤΕΛΙΚΟ SCORE'].min()
                                 best_scenario = comparison_df[comparison_df['🏆 ΤΕΛΙΚΟ SCORE'] == best_score]['Σενάριο'].iloc[0]
                                 
-                                st.success(f"🥇 **Καλύτερο Σενάριο:**# -*- coding: utf-8 -*-
+                                st.success(f"🥇 **Καλύτερο Σενάριο:** {best_scenario} (Score: {best_score})")
 """
 Streamlit App - Σύστημα Κατανομής Μαθητών Α' Δημοτικού
 Ολοκληρωμένη εφαρμογή σύμφωνα με τις προδιαγραφές
@@ -53,6 +53,28 @@ except ImportError:
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
+
+
+# --- Fixed footer logo (bottom-right, ~1cm) ---
+def render_fixed_logo():
+    try:
+        logo_bytes = st.session_state.get("footer_logo_png", None)
+        if not logo_bytes:
+            return
+        b64 = base64.b64encode(logo_bytes).decode("utf-8")
+        st.markdown(f"""
+        <style>
+        .fixed-logo-img {{
+            position: fixed;
+            right: 1cm;
+            bottom: 1cm;
+            z-index: 1000;
+        }}
+        </style>
+        <img class="fixed-logo-img" src="data:image/png;base64,{b64}" width="140"/>
+        """, unsafe_allow_html=True)
+    except Exception as _e:
+        pass
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
@@ -329,24 +351,20 @@ def show_app_control():
 
 # Helper Functions
 def auto_num_classes(df, override=None, min_classes=2):
-    """Υπολογισμός αριθμού τμημάτων βάσει του τύπου ⌈N/25⌉"""
+    
+    """Υπολογισμός αριθμού τμημάτων βάσει ⌈N/25⌉, με ελάχιστο 2 τμήματα."""
     if override is not None:
         try:
             return max(min_classes, int(override))
-        except:
+        except Exception:
             pass
-    
+
     if df is None or len(df) == 0:
-        return min_classes
-        
+        return max(2, min_classes)
+
     N = len(df)
-    calculated_classes = math.ceil(N / 25)
-    
-    # Ελάχιστα 2 τμήματα, εκτός αν έχουμε λιγότερους από 13 μαθητές
-    if N < 13:
-        return 1
-    else:
-        return max(min_classes, calculated_classes)
+    calculated = math.ceil(N / 25)
+    return max(2, max(min_classes, calculated))
 
 def validate_excel_columns(df):
     """Έλεγχος απαιτούμενων στηλών"""
@@ -433,7 +451,7 @@ class StudentDistributor:
         total_students = len(self.data)
         
         # Υπολογισμός αριθμού τμημάτων: ⌈N/25⌉
-        self.num_classes = math.ceil(total_students / 25)
+        self.num_classes = max(2, math.ceil(total_students / 25))
         
         # Δημιουργία base assignment
         students_per_class = total_students // self.num_classes
@@ -624,6 +642,7 @@ class StudentDistributor:
                     if available_classes:
                         result[name2_idx] = available_classes[0]
         
+        result = self.enforce_population_limits(result)
         return result
     
     def calculate_scenario_score(self, assignment):
@@ -727,7 +746,83 @@ class StudentDistributor:
         
         return round(score, 2)
     
-    def run_distribution(self, num_scenarios=3):
+    
+
+    def enforce_population_limits(self, assignment, max_per_class=25, max_diff=2):
+        """Ήπια εξισορρόπηση πληθυσμού: μειώνει >25 και διαφορά >2 μετακινώντας ουδέτερους μαθητές.
+        Προσπαθεί να μην δημιουργήσει συγκρούσεις.
+        """
+        if not assignment:
+            return assignment
+        # Συγκρότηση βοηθητικών δομών
+        names = list(self.data['ΟΝΟΜΑ'])
+        class_names = [cls for cls in assignment if cls]
+        if not class_names:
+            return assignment
+        classes = sorted(set(class_names))
+        # Χάρτες
+        def idxs_of(cls):
+            return [i for i, c in enumerate(assignment) if c == cls]
+        # Conflicts χάρτης
+        conflict_map = {}
+        for _, row in self.data.iterrows():
+            nm = row['ΟΝΟΜΑ']
+            raw = row.get('ΣΥΓΚΡΟΥΣΗ', '')
+            arr = [] if pd.isna(raw) else [x.strip() for x in str(raw).split(',') if x.strip()]
+            conflict_map[nm] = set(arr)
+        # Mutual friendships (μόνο για προτεραιότητα — όχι απόλυτο veto)
+        mutual = set()
+        friend_map = {}
+        for _, row in self.data.iterrows():
+            nm = row['ΟΝΟΜΑ']
+            raw = row.get('ΦΙΛΟΙ', '')
+            arr = [] if pd.isna(raw) else [x.strip() for x in str(raw).split(',') if x.strip()]
+            friend_map[nm] = set(arr)
+        for a in names:
+            for b in friend_map.get(a, set()):
+                if a in friend_map.get(b, set()) and a < b:
+                    mutual.add((a,b))
+        def has_mutual_in_same_class(i):
+            a = names[i]
+            for j, b in enumerate(names):
+                if i==j: continue
+                if assignment[i] == assignment[j] and tuple(sorted((a,b))) in mutual:
+                    return True
+            return False
+        # Κύριος βρόχος
+        safety = 0
+        while safety < 1000:
+            safety += 1
+            sizes = {cls: len(idxs_of(cls)) for cls in classes}
+            if not sizes:
+                break
+            max_cls = max(sizes, key=sizes.get)
+            min_cls = min(sizes, key=sizes.get)
+            if sizes[max_cls] <= max_per_class and (sizes[max_cls] - sizes[min_cls]) <= max_diff:
+                break
+            # Βρες υποψήφιο για μετακίνηση από max_cls σε min_cls
+            candidates = idxs_of(max_cls)
+            # Προτίμησε μαθητές χωρίς mutual φίλο στο τωρινό τμήμα
+            candidates_sorted = sorted(candidates, key=lambda i: has_mutual_in_same_class(i))
+            moved = False
+            for i in candidates_sorted:
+                name_i = names[i]
+                # Έλεγξε conflicts στο target
+                target_mates = [names[j] for j in idxs_of(min_cls)]
+                # Μην πάμε αν υπάρχει αμοιβαία σύγκρουση
+                if any((peer in conflict_map.get(name_i,set())) or (name_i in conflict_map.get(peer,set())) for peer in target_mates):
+                    continue
+                assignment[i] = min_cls
+                moved = True
+                break
+            if not moved:
+                # Αν δεν βρέθηκε ασφαλής, μετακίνησε τον τελευταίο διαθέσιμο
+                if candidates:
+                    assignment[candidates[-1]] = min_cls
+                else:
+                    break
+        return assignment
+def run_distribution(self, num_scenarios=3):
         """Εκτέλεση πλήρους κατανομής με score calculation"""
         scenario_scores = {}
         
@@ -1187,6 +1282,9 @@ def show_export_section():
                     st.warning("⚠️ Δεν υπάρχουν αναλυτικά βήματα")
                     return
                 
+                zip_buffer = io.BytesIO()
+
+                
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     
                     for scenario_num, scenario_data in st.session_state.detailed_steps.items():
@@ -1523,6 +1621,13 @@ def show_settings_section():
             value=True
         )
     
+    
+    st.markdown("### 🖼️ Λογότυπο")
+    logo_file = st.file_uploader("Λογότυπο (PNG)", type=["png"], key="footer_logo_uploader")
+    if logo_file is not None:
+        st.session_state.footer_logo_png = logo_file.read()
+        st.success("✔ Το λογότυπο αποθηκεύτηκε (θα εμφανίζεται κάτω-δεξιά).")
+
     st.markdown("---")
     
     # Save settings
