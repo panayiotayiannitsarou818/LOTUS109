@@ -1268,13 +1268,19 @@ def show_export_section():
                         
                         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                             # Create DataFrame with all steps
-                            df_detailed = st.session_state.data.copy()
+                            base_df = st.session_state.final_results if st.session_state.get('final_results') is not None else st.session_state.data
+                            df_detailed = base_df.copy()
                             
                             # Add all step columns
                             for step_name, assignments in scenario_data['data'].items():
                                 df_detailed[step_name] = assignments
                             
-                            # Add final result
+                            # Ensure ΤΜΗΜΑ exists; if not, set from final
+                            if 'ΤΜΗΜΑ' not in df_detailed.columns:
+                                df_detailed['ΤΜΗΜΑ'] = scenario_data['final']
+                            
+                            # Add final result columns (ΒΗΜΑ7)
+                            df_detailed[f'ΒΗΜΑ7_ΣΕΝΑΡΙΟ_{scenario_num}'] = scenario_data['final']
                             df_detailed['ΒΗΜΑ7_ΤΕΛΙΚΟ'] = scenario_data['final']
                             
                             # Add scores as a separate column
