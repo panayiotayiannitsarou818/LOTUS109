@@ -184,8 +184,8 @@ def _extract_step1_id(step1_col_name: str) -> int:
 
 def step2_apply_FIXED_v3(
     df_in: pd.DataFrame,
-    num_classes: Optional[int] = None,
     step1_col_name: str,
+    num_classes: Optional[int] = None,
     *,
     seed: int = 42,
     max_results: int = 5,

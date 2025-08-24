@@ -8,12 +8,14 @@ step3_amivaia_filia_FIXED.py
 - Δεν «σπάει» καμία δυάδα: αν δεν χωράει λόγω ορίου 25, η δυάδα μετρά ως broken και ο ατοποθέτητος παραμένει κενός.
 - Υπολογίζει broken δυάδες & penalty, επιλέγει έως 5 καλύτερα σενάρια.
 """
-
 from typing import List, Tuple, Dict, Optional
 import pandas as pd
 import re
 from pathlib import Path
 from step_3_helpers_FIXED import (
+    parse_friends_string, are_mutual_pair, mutual_dyads,
+    count_broken_dyads, calculate_penalty_score_step3, select_best_scenarios
+)
 
 def _auto_num_classes(df, override=None):
     import math
@@ -21,9 +23,6 @@ def _auto_num_classes(df, override=None):
     # Keep a safe minimum of 2 to match downstream assumptions
     k = max(2, math.ceil(n/25))
     return int(k if override is None else override)
-    parse_friends_string, are_mutual_pair, mutual_dyads,
-    count_broken_dyads, calculate_penalty_score_step3, select_best_scenarios
-)
 
 def _class_fits(df: pd.DataFrame, col: str, class_name: str, add: int=1) -> bool:
     return (df[col]==class_name).sum() + add <= 25
@@ -49,9 +48,9 @@ def apply_step3_on_sheet(
 
     # δώσε προτεραιότητα σε όσους έχουν ΑΚΡΙΒΩΣ 1 αμοιβαίο φίλο (μονοσήμαντες δυάδες)
     def mutual_friends_of(u: str) -> list:
-        friends = parse_friends_string(df.loc[df["ΟΝΟΜΑ"]==u, "ΦΙΛΟΙ"].values[0] if not df.loc[df["ΟΝΟΜΑ"]==u, "ΦΙΛΟΙ"].empty else "")
+        cell = df.loc[df["ΟΝΟΜΑ"]==u, "ΦΙΛΟΙ"]
+        friends = parse_friends_string(cell.values[0] if not cell.empty else "")
         return [v for v in friends if are_mutual_pair(df, u, v)]
-
     # κατασκεύασε λίστα (u, v, class_v) για v ήδη placed
     candidates = []
     for u in unplaced_names:
