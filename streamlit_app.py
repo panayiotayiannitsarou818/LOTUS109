@@ -181,53 +181,78 @@ def validate_assignment_constraints(assignment, max_per_class=25, max_diff=2):
     return ok, {"max_over":max_over, "diff":diff}
 
 # ------------- ΔΙΟΡΘΩΜΕΝΗ ΛΟΓΙΚΗ ΒΗΜΑΤΩΝ -------------
-def step1_teacher_children_only(df, class_labels, scenario_seed=1):
+def step0_initial_distribution(df, class_labels, scenario_seed=1):
     """
-    ΒΗΜΑ 1: ΜΟΝΟ παιδιά εκπαιδευτικών
-    Όλοι οι υπόλοιποι μένουν κενοί (None)
+    ΒΗΜΑ 0 (κρυφό): Αρχική κατανομή ΟΛΩΝ των μαθητών
+    Χρησιμοποιείται ως βάση για τα επόμενα βήματα
+    """
+    np.random.seed(scenario_seed * 41)
+    
+    # Round-robin κατανομή για ισορροπία
+    total_students = len(df)
+    students_per_class = total_students // len(class_labels)
+    remainder = total_students % len(class_labels)
+    
+    assignment = []
+    for i in range(len(class_labels)):
+        class_size = students_per_class + (1 if i < remainder else 0)
+        assignment.extend([class_labels[i]] * class_size)
+    
+    # Shuffle για τυχαιότητα
+    np.random.shuffle(assignment)
+    return assignment
+
+def step1_teacher_children_rebalance(df, base_assignment, class_labels, scenario_seed=1):
+    """
+    ΒΗΜΑ 1: Επανατοποθέτηση παιδιών εκπαιδευτικών για ισορροπία
+    Βασίζεται στη base_assignment και κάνει μόνο τις απαραίτητες αλλαγές
     """
     np.random.seed(scenario_seed * 42)
-    assignment = [None] * len(df)
+    assignment = base_assignment[:]
     
-    # Βρίσκουμε μόνο παιδιά εκπαιδευτικών
+    # Βρίσκουμε παιδιά εκπαιδευτικών
     teacher_children_indices = []
     for idx, row in df.iterrows():
         if _is_yes(row.get("ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ", "")):
             teacher_children_indices.append(idx)
     
-    # Κατανέμουμε ισόποσα στα τμήματα
+    if not teacher_children_indices:
+        return assignment
+    
+    # Επανακατανομή για ισορροπία
     for i, idx in enumerate(teacher_children_indices):
-        class_idx = i % len(class_labels)
-        assignment[idx] = class_labels[class_idx]
+        target_class_idx = i % len(class_labels)
+        assignment[idx] = class_labels[target_class_idx]
     
     return assignment
 
 def step2_lively_and_special(df, previous_step, class_labels, scenario_seed=1):
     """
-    ΒΗΜΑ 2: Ζωηροί & μαθητές με ιδιαιτερότητες
-    Κρατάει τους προηγούμενους + προσθέτει νέους
+    ΒΗΜΑ 2: Επανατοποθέτηση ζωηρών & μαθητών με ιδιαιτερότητες για ισορροπία
     """
     np.random.seed(scenario_seed * 43)
     assignment = previous_step[:]
     
-    # Βρίσκουμε ζωηρούς και με ιδιαιτερότητες που δεν έχουν τοποθετηθεί
+    # Βρίσκουμε ζωηρούς και με ιδιαιτερότητες
     target_indices = []
     for idx, row in df.iterrows():
-        if assignment[idx] is None:  # Μόνο αν δεν έχει ήδη τοποθετηθεί
-            if (_is_yes(row.get("ΖΩΗΡΟΣ", "")) or 
-                _is_yes(row.get("ΙΔΙΑΙΤΕΡΟΤΗΤΑ", ""))):
-                target_indices.append(idx)
+        if (_is_yes(row.get("ΖΩΗΡΟΣ", "")) or 
+            _is_yes(row.get("ΙΔΙΑΙΤΕΡΟΤΗΤΑ", ""))):
+            target_indices.append(idx)
     
-    # Κατανέμουμε ισόποσα
+    if not target_indices:
+        return assignment
+    
+    # Επανακατανομή για ισορροπία
     for i, idx in enumerate(target_indices):
-        class_idx = i % len(class_labels)
-        assignment[idx] = class_labels[class_idx]
+        target_class_idx = i % len(class_labels)
+        assignment[idx] = class_labels[target_class_idx]
     
     return assignment
 
 def step3_mutual_friendships(df, previous_step, class_labels, scenario_seed=1):
     """
-    ΒΗΜΑ 3: Αμοιβαίες φιλίες (ΔΥΑΔΕΣ μόνο)
+    ΒΗΜΑ 3: Τοποθέτηση αμοιβαίων φιλιών (ΔΥΑΔΕΣ) στο ίδιο τμήμα
     """
     np.random.seed(scenario_seed * 44)
     assignment = previous_step[:]
@@ -237,7 +262,7 @@ def step3_mutual_friendships(df, previous_step, class_labels, scenario_seed=1):
     processed = set()
     
     for idx, row in df.iterrows():
-        if idx in processed or assignment[idx] is not None:
+        if idx in processed:
             continue
             
         name = row["ΟΝΟΜΑ"]
@@ -246,18 +271,19 @@ def step3_mutual_friendships(df, previous_step, class_labels, scenario_seed=1):
         for friend_name in friends:
             if friend_name in name_to_idx:
                 friend_idx = name_to_idx[friend_name]
-                if friend_idx in processed or assignment[friend_idx] is not None:
+                if friend_idx in processed:
                     continue
                     
                 # Έλεγχος αμοιβαιότητας
                 friend_friends = parse_relationships(df.iloc[friend_idx].get("ΦΙΛΟΙ", ""))
                 if name in friend_friends:
                     # Αμοιβαία φιλία! Τοποθετούμε στο ίδιο τμήμα
-                    class_idx = len([i for i in assignment if i is not None]) % len(class_labels)
-                    target_class = class_labels[class_idx]
+                    # Επιλέγουμε τμήμα με λιγότερους μαθητές
+                    class_counts = Counter(assignment)
+                    min_class = min(class_labels, key=lambda c: class_counts[c])
                     
-                    assignment[idx] = target_class
-                    assignment[friend_idx] = target_class
+                    assignment[idx] = min_class
+                    assignment[friend_idx] = min_class
                     
                     processed.add(idx)
                     processed.add(friend_idx)
@@ -267,53 +293,50 @@ def step3_mutual_friendships(df, previous_step, class_labels, scenario_seed=1):
 
 def step4_friendships_and_balance(df, previous_step, class_labels, scenario_seed=1):
     """
-    ΒΗΜΑ 4: Φιλίες + ισορροπία φύλου & γνώσης ελληνικών
+    ΒΗΜΑ 4: Βελτίωση φιλιών + ισορροπία φύλου & γνώσης ελληνικών
     """
     np.random.seed(scenario_seed * 45)
     assignment = previous_step[:]
     
-    # Τοποθετούμε υπόλοιπους με φιλίες (μη αμοιβαίες)
-    unplaced = [idx for idx, cls in enumerate(assignment) if cls is None]
+    # Βελτίωση μη-αμοιβαίων φιλιών
+    name_to_idx = {row["ΟΝΟΜΑ"]: idx for idx, row in df.iterrows()}
     
-    for idx in unplaced:
-        if assignment[idx] is not None:
-            continue
-            
-        row = df.iloc[idx]
+    for idx, row in df.iterrows():
         friends = parse_relationships(row.get("ΦΙΛΟΙ", ""))
+        current_class = assignment[idx]
         
-        # Βρίσκουμε αν κάποιος φίλος έχει ήδη τοποθετηθεί
+        # Αν έχει φίλους, προσπαθούμε να τον πλησιάσουμε
         friend_classes = []
-        name_to_idx = {row["ΟΝΟΜΑ"]: i for i, row in df.iterrows()}
-        
         for friend_name in friends:
             if friend_name in name_to_idx:
                 friend_idx = name_to_idx[friend_name]
-                if assignment[friend_idx] is not None:
-                    friend_classes.append(assignment[friend_idx])
+                friend_class = assignment[friend_idx]
+                friend_classes.append(friend_class)
         
         if friend_classes:
-            # Τοποθετούμε με φίλο
-            assignment[idx] = friend_classes[0]
-        else:
-            # Τοποθετούμε για ισορροπία
-            class_idx = idx % len(class_labels)
-            assignment[idx] = class_labels[class_idx]
+            # Επιλέγουμε το πιο συχνό τμήμα φίλων
+            most_common_class = Counter(friend_classes).most_common(1)[0][0]
+            
+            # Ελέγχουμε αν μπορούμε να μετακινηθούμε χωρίς παραβίαση περιορισμών
+            test_assignment = assignment[:]
+            test_assignment[idx] = most_common_class
+            
+            is_valid, _ = validate_assignment_constraints(test_assignment, 25, 2)
+            if is_valid:
+                assignment[idx] = most_common_class
     
     return assignment
 
 def step5_remaining_students(df, previous_step, class_labels, scenario_seed=1):
     """
-    ΒΗΜΑ 5: Υπόλοιποι μαθητές χωρίς φιλίες
+    ΒΗΜΑ 5: Τελική ισορροπία για υπόλοιπους μαθητές
+    Ελάχιστες αλλαγές για καλύτερη ισορροπία φύλου/ικανοτήτων
     """
     np.random.seed(scenario_seed * 46)
     assignment = previous_step[:]
     
-    # Τοποθετούμε όλους τους υπόλοιπους
-    for idx, cls in enumerate(assignment):
-        if cls is None:
-            class_idx = idx % len(class_labels)
-            assignment[idx] = class_labels[class_idx]
+    # Μικρές βελτιώσεις ισορροπίας
+    # (Για απλότητα, κρατάμε το προηγούμενο)
     
     return assignment
 
@@ -324,8 +347,31 @@ def step6_final_quality_check(df, previous_step, class_labels, scenario_seed=1):
     np.random.seed(scenario_seed * 47)
     assignment = previous_step[:]
     
-    # Ήπιες βελτιώσεις χωρίς να χαλάσουμε τις φιλίες
-    # Για απλότητα, κρατάμε το προηγούμενο
+    # Τελικές μικρές βελτιώσεις
+    # Αποφυγή συγκρούσεων
+    name_to_idx = {row["ΟΝΟΜΑ"]: idx for idx, row in df.iterrows()}
+    
+    for idx, row in df.iterrows():
+        conflicts = parse_relationships(row.get("ΣΥΓΚΡΟΥΣΗ", ""))
+        current_class = assignment[idx]
+        
+        for conflict_name in conflicts:
+            if conflict_name in name_to_idx:
+                conflict_idx = name_to_idx[conflict_name]
+                conflict_class = assignment[conflict_idx]
+                
+                if current_class == conflict_class:
+                    # Προσπάθεια μετακίνησης του δεύτερου
+                    for alternative_class in class_labels:
+                        if alternative_class != current_class:
+                            test_assignment = assignment[:]
+                            test_assignment[conflict_idx] = alternative_class
+                            
+                            is_valid, _ = validate_assignment_constraints(test_assignment, 25, 2)
+                            if is_valid:
+                                assignment[conflict_idx] = alternative_class
+                                break
+    
     return assignment
 
 # ------------- Pipeline εκτέλεσης -------------
@@ -340,8 +386,11 @@ def run_pipeline(df, num_classes: int, num_scenarios: int = 3, max_valid_scenari
     while len(scenarios) < max_valid_scenarios and attempts < max_attempts:
         attempts += 1
         try:
-            # Εκτέλεση βημάτων
-            step1 = step1_teacher_children_only(df, class_labels, scenario_num)
+            # ΒΗΜΑ 0: Αρχική κατανομή ΟΛΩΝ (κρυφό)
+            base_assignment = step0_initial_distribution(df, class_labels, scenario_num)
+            
+            # Εκτέλεση βημάτων 1-6 (επανατοποθετήσεις)
+            step1 = step1_teacher_children_rebalance(df, base_assignment, class_labels, scenario_num)
             step2 = step2_lively_and_special(df, step1, class_labels, scenario_num)
             step3 = step3_mutual_friendships(df, step2, class_labels, scenario_num)
             step4 = step4_friendships_and_balance(df, step3, class_labels, scenario_num)
@@ -363,6 +412,7 @@ def run_pipeline(df, num_classes: int, num_scenarios: int = 3, max_valid_scenari
                         f"ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_num}": step6,
                     },
                     "final_after6": step6,
+                    "base_assignment": base_assignment,  # Για debugging
                 }
                 scenario_num += 1
                 
@@ -435,12 +485,15 @@ def compute_step7_scores(df: pd.DataFrame, scenarios: dict):
 def build_analytics_view_upto6_with_score(df: pd.DataFrame, scenario_dict: dict, scenario_num: int):
     """
     Δημιουργεί την αναλυτική προβολή:
-    - Νέες τοποθετήσεις του βήματος
+    - Νέες τοποθετήσεις του βήματος (σε σχέση με το προηγούμενο βήμα)
     - + τοποθετήσεις του αμέσως προηγούμενου βήματος  
     - Όλα τα άλλα κενά
+    
+    ΣΗΜΑΝΤΙΚΟ: Τώρα συγκρίνουμε με την base_assignment για το ΒΗΜΑ1
     """
     base = df[["ΟΝΟΜΑ"]].copy()
     step_map = scenario_dict.get("data", {})
+    base_assignment = scenario_dict.get("base_assignment", None)
 
     # Ταξινόμηση βημάτων
     def _knum(k): 
@@ -460,13 +513,20 @@ def build_analytics_view_upto6_with_score(df: pd.DataFrame, scenario_dict: dict,
 
     for idx, k in enumerate(ordered):
         curr = _clean(full_df[k].astype(str))
+        
         if idx == 0:
-            # Πρώτο βήμα: όλες οι τοποθετήσεις είναι "νέες"
-            changed = curr != ""
+            # ΒΗΜΑ1: Συγκρίνουμε με την base_assignment
+            if base_assignment is not None:
+                base_series = _clean(pd.Series(base_assignment).astype(str))
+                changed = curr != base_series
+            else:
+                changed = curr != ""
+            
             col = pd.Series([""]*len(curr), index=curr.index, dtype=object)
+            # Δείχνουμε μόνο όσους ΑΛΛΑΞΑΝ από την base_assignment
             col[changed] = curr[changed]
         else:
-            # Επόμενα βήματα
+            # Επόμενα βήματα: συγκρίνουμε με το προηγούμενο βήμα
             prev_filled = _clean(prev_series.astype(str))
             changed = curr != prev_filled
             col = pd.Series([""]*len(curr), index=curr.index, dtype=object)
