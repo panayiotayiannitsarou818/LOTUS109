@@ -1,315 +1,3 @@
-    def calculate_detailed_score_breakdown(self, assignment, scenario_num):
-        """
-        ΝΕΟΣ: Αναλυτική βαθμολογία ανά κριτήριο για ΒΗΜΑ7
-        Επιστρέφει dictionary με επιμέρους μετρικές όπως στις οδηγίες
-        """
-        if not assignment or len(assignment) != len(self.data):
-            return {
-                'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
-                'Δ_ΦΥΛΟ': 999,
-                'Δ_ΠΛΗΘΥΣΜΟΣ': 999, 
-                'Δ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ': 999,
-                'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ι': 999,
-                'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ζ': 999,
-                'ΠΑΙΔ_ΣΥΓΚΡ_Ζ_Ζ': 999,
-                'ΣΠΑΣΜΕΝΗ_ΦΙΛΙΑ': 999,
-                'ΒΑΘΜΟΛΟΓΙΑ': 999
-            }
-        
-        # 1. Διαφορά Φύλου (Gender Balance)
-        gender_penalties = 0
-        class_counts = defaultdict(int)
-        for class_assignment in assignment:
-            if class_assignment:
-                class_counts[class_assignment] += 1
-                
-        for class_name in class_counts.keys():
-            class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
-            boys = sum(1 for i in class_indices if self.data.iloc[i]['ΦΥΛΟ'] == 'Α')
-            girls = len(class_indices) - boys
-            gender_diff = abs(boys - girls)
-            gender_penalties += gender_diff * 2
-        
-        # 2. Διαφορά Πληθυσμού
-        populations = list(class_counts.values())
-        pop_std = np.std(populations) if populations else 0
-        pop_penalty = pop_std * 10
-        
-        # Penalty για τμήματα >25
-        max_pop = max(populations) if populations else 0
-        if max_pop > 25:
-            pop_penalty += (max_pop - 25) * 50
-            
-        # 3. Διαφορά Γνώσης Ελληνικών
-        greek_penalty = 0
-        category_distribution = defaultdict(int)
-        for class_name in class_counts.keys():
-            class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
-            category_count = sum(1 for i in class_indices 
-                               if self.data.iloc[i].get('ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', 'Ο') == 'Ν')
-            category_distribution[class_name] = category_count
-        
-        if category_distribution:
-            cat_values = list(category_distribution.values())
-            cat_std = np.std(cat_values)
-            greek_penalty = cat_std * 5
-            
-        # 4-6. Συγκρούσεις Παιδιών (Ι-Ι, Ι-Ζ, Ζ-Ζ) - Απλοποιημένη έκδοση
-        # Για τώρα χρησιμοποιούμε έναν γενικό υπολογισμό
-        special_penalties = {'Ι_Ι': 0, 'Ι_Ζ': 0, 'Ζ_Ζ': 0}
-        
-        # 7. Σπασμένες Φιλίες
-        broken_friendships = 0
-        processed_pairs = set()
-        
-        for idx, row in self.data.iterrows():
-            if idx < len(assignment):
-                name = row['ΟΝΟΜΑ']
-                current_class = assignment[idx]
-                friends = self.parse_relationships(row.get('ΦΙΛΟΙ', ''))
-                
-                for friend in friends:
-                    friend_rows = self.data[self.data['ΟΝΟΜΑ'] == friend]
-                    if len(friend_rows) > 0:
-                        friend_idx = friend_rows.index[0]
-                        if friend_idx < len(assignment):
-                            friend_class = assignment[friend_idx]
-                            
-                            # Check if friendship is mutual
-                            friend_friends = self.parse_relationships(
-                                friend_rows.iloc[0].get('ΦΙΛΟΙ', '')
-                            )
-                            
-                            pair = tuple(sorted([name, friend]))
-                            if name in friend_friends and pair not in processed_pairs:
-                                if current_class != friend_class:
-                                    broken_friendships += 1
-                                processed_pairs.add(pair)
-        
-        friendship_penalty = broken_friendships * 20
-        
-        # 8. Conflict Penalty (Συγκρούσεις)
-        conflict_violations = 0
-        for idx, row in self.data.iterrows():
-            if idx < len(assignment):
-                name = row['ΟΝΟΜΑ']
-                current_class = assignment[idx]
-                conflicts = self.parse_relationships(row.get('ΣΥΓΚΡΟΥΣΗ', ''))
-                
-                for conflict in conflicts:
-                    conflict_rows = self.data[self.data['ΟΝΟΜΑ'] == conflict]
-                    if len(conflict_rows) > 0:
-                        conflict_idx = conflict_rows.index[0]
-                        if conflict_idx < len(assignment):
-                            conflict_class = assignment[conflict_idx]
-                            if current_class == conflict_class:
-                                conflict_violations += 1
-        
-        conflict_penalty = conflict_violations * 100
-        
-        # Συνολική βαθμολογία
-        total_score = (gender_penalties + pop_penalty + greek_penalty + 
-                      sum(special_penalties.values()) + friendship_penalty + conflict_penalty)
-        
-        return {
-            'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
-            'Δ_ΦΥΛΟ': round(gender_penalties, 2),
-            'Δ_ΠΛΗΘΥΣΜΟΣ': round(pop_penalty, 2), 
-            'Δ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ': round(greek_penalty, 2),
-            'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ι': round(special_penalties['Ι_Ι'], 2),
-            'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ζ': round(special_penalties['Ι_Ζ'], 2),
-            'ΠΑΙΔ_ΣΥΓΚΡ_Ζ_Ζ': round(special_penalties['Ζ_Ζ'], 2),
-            'ΣΠΑΣΜΕΝΗ_ΦΙΛΙΑ': broken_friendships,
-            'ΒΑΘΜΟΛΟΓΙΑ': round(total_score, 2)
-        }def show_export_section():
-    """
-    ΔΙΟΡΘΩΜΕΝΗ ΕΚΔΟΣΗ:
-    Ενότητα εξαγωγής αποτελεσμάτων - ΑΦΑΙΡΩ ΕΝΤΕΛΩΣ ΠΛΗΡΕΣ, ΜΟΝΟ ΑΝΑΛΥΤΙΚΑ
-    """
-    st.markdown("<div class='step-header'>💾 Εξαγωγή Αποτελεσμάτων</div>", unsafe_allow_html=True)
-    
-    if st.session_state.final_results is None:
-        st.markdown("""
-        <div class="warning-box">
-        <h4>⚠️ Δεν υπάρχουν αποτελέσματα προς εξαγωγή</h4>
-        <p>Παρακαλώ εκτελέστε πρώτα την κατανομή των μαθητών.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("⚡ Πήγαινε στην Εκτέλεση", key="go_to_execute_from_export", use_container_width=True):
-            st.session_state.current_section = 'execute'
-            st.rerun()
-        return
-    
-    # Results preview
-    st.markdown("### 👁️ Προεπισκόπηση Αποτελεσμάτων")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        if st.session_state.final_results is not None:
-            # Show sample of results
-            st.dataframe(st.session_state.final_results[['ΟΝΟΜΑ', 'ΦΥΛΟ', 'ΤΜΗΜΑ']].head(10), use_container_width=True)
-    
-    with col2:
-        if st.session_state.statistics is not None:
-            st.markdown("**📊 Στατιστικά Κατανομής:**")
-            st.dataframe(st.session_state.statistics, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # Export options
-    st.markdown("### 📁 Επιλογές Εξαγωγής")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 💾 Τελικό Αποτέλεσμα")
-        st.info("Αρχείο Excel με την τελική κατανομή στη στήλη ΤΜΗΜΑ")
-        
-        if st.button("📥 Λήψη Τελικού Excel", key="download_final", use_container_width=True):
-            try:
-                # Create Excel file
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    # Main results sheet
-                    st.session_state.final_results.to_excel(writer, sheet_name='Κατανομή_Μαθητών', index=False)
-                    
-                    # Statistics sheet
-                    if st.session_state.statistics is not None:
-                        st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
-                
-                # Download button
-                st.download_button(
-                    label="⬇️ Λήψη Αρχείου",
-                    data=output.getvalue(),
-                    file_name=f"Κατανομή_Μαθητών_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_final_file"
-                )
-                
-                st.success("✅ Το αρχείο είναι έτοιμο για λήψη!")
-                
-            except Exception as e:
-                st.error(f"❌ Σφάλμα δημιουργίας αρχείου: {str(e)}")
-    
-    with col2:
-        st.markdown("#### 📊 Αναλυτικά Βήματα")
-        st.info("ZIP αρχείο με όλα τα ενδιάμεσα βήματα (ΒΗΜΑ1 έως ΒΗΜΑ6) + βαθμολογία ΜΟΝΟ για το ΒΗΜΑ7")
-        
-        if st.button("📥 Λήψη Αναλυτικών Βημάτων", key="download_detailed", use_container_width=True):
-            try:
-                if st.session_state.detailed_steps is None:
-                    st.warning("⚠️ Δεν υπάρχουν αναλυτικά βήματα")
-                    return
-                
-                # Create ZIP buffer
-                zip_buffer = io.BytesIO()
-                
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    
-                    for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-                        # Create Excel for this scenario
-                        excel_buffer = io.BytesIO()
-                        
-                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                            # 1. ΑΝΑΛΥΤΙΚΑ: ΜΟΝΟ οι νέες τοποθετήσεις + το αμέσως προηγούμενο βήμα
-                            df_detailed_view = build_step_columns_with_prev(
-                                st.session_state.data, 
-                                scenario_data, 
-                                scenario_num, 
-                                base_columns=['ΟΝΟΜΑ']
-                            )
-                            df_detailed_view.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}_Αναλυτικά', index=False)
-                            
-                            # 2. ΠΛΗΡΕΣ ΙΣΤΟΡΙΚΟ: Όλες οι στήλες ΒΗΜΑ1 έως ΒΗΜΑ6 πλήρως συμπληρωμένες
-                            df_full_history = st.session_state.data[['ΟΝΟΜΑ']].copy()
-                            for step_key in sorted(scenario_data['data'].keys()):
-                                df_full_history[step_key] = scenario_data['data'][step_key]
-                            df_full_history['ΒΗΜΑ7_ΤΕΛΙΚΟ'] = scenario_data['final']
-                            df_full_history.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}_Πλήρες_Ιστορικό', index=False)
-                            
-                            # 3. ΑΝΑΛΥΤΙΚΗ ΒΑΘΜΟΛΟΓΙΑ ΒΗΜΑ7 - ανά κριτήριο
-                            if 'detailed_score' in scenario_data:
-                                detailed_scores_df = pd.DataFrame([scenario_data['detailed_score']])
-                                detailed_scores_df.to_excel(writer, sheet_name='ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7_ΑΝΑΛΥΤΙΚΗ', index=False)
-                            else:
-                                # Fallback για παλιά δεδομένα
-                                scores_df = pd.DataFrame([{
-                                    'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
-                                    'ΒΗΜΑ7_ΒΑΘΜΟΛΟΓΙΑ': scenario_data.get('final_score', 0),
-                                    'Περιγραφή': 'Τελική βαθμολογία για το Βήμα 7 (Αποφυγή Συγκρούσεων & Τελική Κατανομή)'
-                                }])
-                                scores_df.to_excel(writer, sheet_name='ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7', index=False)
-                        
-                        zip_file.writestr(
-                            f"ΣΕΝΑΡΙΟ_{scenario_num}_Αναλυτικά_Βήματα.xlsx",
-                            excel_buffer.getvalue()
-                        )
-                    
-                    # Add comprehensive summary with all scenarios comparison
-                    if st.session_state.detailed_steps:
-                        summary_buffer = io.BytesIO()
-                        with pd.ExcelWriter(summary_buffer, engine='xlsxwriter') as writer:
-                            
-                            # Main statistics
-                            if st.session_state.statistics is not None:
-                                st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
-                            
-                            # Scenarios comparison με ΑΝΑΛΥΤΙΚΕΣ βαθμολογίες ΒΗΜΑ7
-                            scenario_comparison = []
-                            detailed_comparison = []
-                            
-                            for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-                                if 'final_score' in scenario_data:
-                                    scenario_comparison.append({
-                                        'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
-                                        'ΒΗΜΑ7_ΤΕΛΙΚΟ_SCORE': scenario_data['final_score']
-                                    })
-                                
-                                # Αναλυτική σύγκριση ανά κριτήριο
-                                if 'detailed_score' in scenario_data:
-                                    detailed_comparison.append(scenario_data['detailed_score'])
-                            
-                            if scenario_comparison:
-                                comparison_df = pd.DataFrame(scenario_comparison)
-                                comparison_df.to_excel(writer, sheet_name='Σύγκριση_ΒΗΜΑ7_Scores', index=False)
-                            
-                            # ΝΕΟΣ: Αναλυτική σύγκριση ανά κριτήριο
-                            if detailed_comparison:
-                                detailed_df = pd.DataFrame(detailed_comparison)
-                                detailed_df.to_excel(writer, sheet_name='Αναλυτική_Σύγκριση_ΒΗΜΑ7', index=False)
-                        
-                        zip_file.writestr("ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx", summary_buffer.getvalue())
-                
-                # Download button
-                st.download_button(
-                    label="⬇️ Λήψη ZIP Αρχείου",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"Αναλυτικά_Βήματα_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-                    mime="application/zip",
-                    key="download_detailed_file"
-                )
-                
-                st.success("✅ Το ZIP αρχείο είναι έτοιμο για λήψη!")
-                
-                # Show what's included in ZIP
-                st.markdown("""
-                **📁 Περιεχόμενα ZIP αρχείου (ΕΝΗΜΕΡΩΜΕΝΟ):**
-                - `ΣΕΝΑΡΙΟ_X_Αναλυτικά_Βήματα.xlsx` - Ένα αρχείο για κάθε σενάριο
-                  - **Φύλλο "Σενάριο_X_Αναλυτικά":** Νέες τοποθετήσεις + προηγούμενο βήμα ανά στήλη
-                  - **Φύλλο "Σενάριο_X_Πλήρες_Ιστορικό":** ΟΛΕΣ οι στήλες ΒΗΜΑ1-ΒΗΜΑ6 πλήρως συμπληρωμένες
-                  - **Φύλλο "ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7_ΑΝΑΛΥΤΙΚΗ":** Αναλυτική βαθμολογία ανά κριτήριο (Δ.Φύλο, Δ.Πληθυσμός, κτλ)
-                - `ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx` - Συνολική σύγκριση
-                  - **Φύλλο "Στατιστικά":** Τελικά στατιστικά κατανομής  
-                  - **Φύλλο "Σύγκριση_ΒΗΜΑ7_Scores":** Συνολικά scores ανά σενάριο
-                  - **Φύλλο "Αναλυτική_Σύγκριση_ΒΗΜΑ7":** Πίνακας με όλα τα κριτήρια ανά σενάριο (Δ.Φύλο, Δ.Πληθυσμός, Σπασμένη Φιλία, κτλ)
-                """)
-            
-            except Exception as e:
-                st.error(f"❌ Σφάλμα δημιουργίας ZIP: {str(e)}")
-                with st.expander("🔍 Τεχνικές Λεπτομέρειες"):
-                    st.code(traceback.format_exc())
-
 def show_details_section():
     """
     ΔΙΟΡΘΩΜΕΝΗ ΕΚΔΟΣΗ:
@@ -1089,6 +777,318 @@ class StudentDistributor:
         self.data = data.copy()
         self.num_classes = auto_num_classes(data)
         self.scenarios = {}
+    def calculate_detailed_score_breakdown(self, assignment, scenario_num):
+        """
+        ΝΕΟΣ: Αναλυτική βαθμολογία ανά κριτήριο για ΒΗΜΑ7
+        Επιστρέφει dictionary με επιμέρους μετρικές όπως στις οδηγίες
+        """
+        if not assignment or len(assignment) != len(self.data):
+            return {
+                'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                'Δ_ΦΥΛΟ': 999,
+                'Δ_ΠΛΗΘΥΣΜΟΣ': 999, 
+                'Δ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ': 999,
+                'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ι': 999,
+                'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ζ': 999,
+                'ΠΑΙΔ_ΣΥΓΚΡ_Ζ_Ζ': 999,
+                'ΣΠΑΣΜΕΝΗ_ΦΙΛΙΑ': 999,
+                'ΒΑΘΜΟΛΟΓΙΑ': 999
+            }
+    
+        # 1. Διαφορά Φύλου (Gender Balance)
+        gender_penalties = 0
+        class_counts = defaultdict(int)
+        for class_assignment in assignment:
+            if class_assignment:
+                class_counts[class_assignment] += 1
+            
+        for class_name in class_counts.keys():
+            class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
+            boys = sum(1 for i in class_indices if self.data.iloc[i]['ΦΥΛΟ'] == 'Α')
+            girls = len(class_indices) - boys
+            gender_diff = abs(boys - girls)
+            gender_penalties += gender_diff * 2
+    
+        # 2. Διαφορά Πληθυσμού
+        populations = list(class_counts.values())
+        pop_std = np.std(populations) if populations else 0
+        pop_penalty = pop_std * 10
+    
+        # Penalty για τμήματα >25
+        max_pop = max(populations) if populations else 0
+        if max_pop > 25:
+            pop_penalty += (max_pop - 25) * 50
+        
+        # 3. Διαφορά Γνώσης Ελληνικών
+        greek_penalty = 0
+        category_distribution = defaultdict(int)
+        for class_name in class_counts.keys():
+            class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
+            category_count = sum(1 for i in class_indices 
+                               if self.data.iloc[i].get('ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', 'Ο') == 'Ν')
+            category_distribution[class_name] = category_count
+    
+        if category_distribution:
+            cat_values = list(category_distribution.values())
+            cat_std = np.std(cat_values)
+            greek_penalty = cat_std * 5
+        
+        # 4-6. Συγκρούσεις Παιδιών (Ι-Ι, Ι-Ζ, Ζ-Ζ) - Απλοποιημένη έκδοση
+        # Για τώρα χρησιμοποιούμε έναν γενικό υπολογισμό
+        special_penalties = {'Ι_Ι': 0, 'Ι_Ζ': 0, 'Ζ_Ζ': 0}
+    
+        # 7. Σπασμένες Φιλίες
+        broken_friendships = 0
+        processed_pairs = set()
+    
+        for idx, row in self.data.iterrows():
+            if idx < len(assignment):
+                name = row['ΟΝΟΜΑ']
+                current_class = assignment[idx]
+                friends = self.parse_relationships(row.get('ΦΙΛΟΙ', ''))
+            
+                for friend in friends:
+                    friend_rows = self.data[self.data['ΟΝΟΜΑ'] == friend]
+                    if len(friend_rows) > 0:
+                        friend_idx = friend_rows.index[0]
+                        if friend_idx < len(assignment):
+                            friend_class = assignment[friend_idx]
+                        
+                            # Check if friendship is mutual
+                            friend_friends = self.parse_relationships(
+                                friend_rows.iloc[0].get('ΦΙΛΟΙ', '')
+                            )
+                        
+                            pair = tuple(sorted([name, friend]))
+                            if name in friend_friends and pair not in processed_pairs:
+                                if current_class != friend_class:
+                                    broken_friendships += 1
+                                processed_pairs.add(pair)
+    
+        friendship_penalty = broken_friendships * 20
+    
+        # 8. Conflict Penalty (Συγκρούσεις)
+        conflict_violations = 0
+        for idx, row in self.data.iterrows():
+            if idx < len(assignment):
+                name = row['ΟΝΟΜΑ']
+                current_class = assignment[idx]
+                conflicts = self.parse_relationships(row.get('ΣΥΓΚΡΟΥΣΗ', ''))
+            
+                for conflict in conflicts:
+                    conflict_rows = self.data[self.data['ΟΝΟΜΑ'] == conflict]
+                    if len(conflict_rows) > 0:
+                        conflict_idx = conflict_rows.index[0]
+                        if conflict_idx < len(assignment):
+                            conflict_class = assignment[conflict_idx]
+                            if current_class == conflict_class:
+                                conflict_violations += 1
+    
+        conflict_penalty = conflict_violations * 100
+    
+        # Συνολική βαθμολογία
+        total_score = (gender_penalties + pop_penalty + greek_penalty + 
+                      sum(special_penalties.values()) + friendship_penalty + conflict_penalty)
+    
+        return {
+            'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+            'Δ_ΦΥΛΟ': round(gender_penalties, 2),
+            'Δ_ΠΛΗΘΥΣΜΟΣ': round(pop_penalty, 2), 
+            'Δ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ': round(greek_penalty, 2),
+            'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ι': round(special_penalties['Ι_Ι'], 2),
+            'ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ζ': round(special_penalties['Ι_Ζ'], 2),
+            'ΠΑΙΔ_ΣΥΓΚΡ_Ζ_Ζ': round(special_penalties['Ζ_Ζ'], 2),
+            'ΣΠΑΣΜΕΝΗ_ΦΙΛΙΑ': broken_friendships,
+            'ΒΑΘΜΟΛΟΓΙΑ': round(total_score, 2)
+        }def show_export_section():
+    """
+    ΔΙΟΡΘΩΜΕΝΗ ΕΚΔΟΣΗ:
+    Ενότητα εξαγωγής αποτελεσμάτων - ΑΦΑΙΡΩ ΕΝΤΕΛΩΣ ΠΛΗΡΕΣ, ΜΟΝΟ ΑΝΑΛΥΤΙΚΑ
+    """
+    st.markdown("<div class='step-header'>💾 Εξαγωγή Αποτελεσμάτων</div>", unsafe_allow_html=True)
+
+    if st.session_state.final_results is None:
+        st.markdown("""
+        <div class="warning-box">
+        <h4>⚠️ Δεν υπάρχουν αποτελέσματα προς εξαγωγή</h4>
+        <p>Παρακαλώ εκτελέστε πρώτα την κατανομή των μαθητών.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+        if st.button("⚡ Πήγαινε στην Εκτέλεση", key="go_to_execute_from_export", use_container_width=True):
+            st.session_state.current_section = 'execute'
+            st.rerun()
+        return
+
+    # Results preview
+    st.markdown("### 👁️ Προεπισκόπηση Αποτελεσμάτων")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        if st.session_state.final_results is not None:
+            # Show sample of results
+            st.dataframe(st.session_state.final_results[['ΟΝΟΜΑ', 'ΦΥΛΟ', 'ΤΜΗΜΑ']].head(10), use_container_width=True)
+
+    with col2:
+        if st.session_state.statistics is not None:
+            st.markdown("**📊 Στατιστικά Κατανομής:**")
+            st.dataframe(st.session_state.statistics, use_container_width=True)
+
+    st.markdown("---")
+
+    # Export options
+    st.markdown("### 📁 Επιλογές Εξαγωγής")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 💾 Τελικό Αποτέλεσμα")
+        st.info("Αρχείο Excel με την τελική κατανομή στη στήλη ΤΜΗΜΑ")
+    
+        if st.button("📥 Λήψη Τελικού Excel", key="download_final", use_container_width=True):
+            try:
+                # Create Excel file
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    # Main results sheet
+                    st.session_state.final_results.to_excel(writer, sheet_name='Κατανομή_Μαθητών', index=False)
+                
+                    # Statistics sheet
+                    if st.session_state.statistics is not None:
+                        st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
+            
+                # Download button
+                st.download_button(
+                    label="⬇️ Λήψη Αρχείου",
+                    data=output.getvalue(),
+                    file_name=f"Κατανομή_Μαθητών_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_final_file"
+                )
+            
+                st.success("✅ Το αρχείο είναι έτοιμο για λήψη!")
+            
+            except Exception as e:
+                st.error(f"❌ Σφάλμα δημιουργίας αρχείου: {str(e)}")
+
+    with col2:
+        st.markdown("#### 📊 Αναλυτικά Βήματα")
+        st.info("ZIP αρχείο με όλα τα ενδιάμεσα βήματα (ΒΗΜΑ1 έως ΒΗΜΑ6) + βαθμολογία ΜΟΝΟ για το ΒΗΜΑ7")
+    
+        if st.button("📥 Λήψη Αναλυτικών Βημάτων", key="download_detailed", use_container_width=True):
+            try:
+                if st.session_state.detailed_steps is None:
+                    st.warning("⚠️ Δεν υπάρχουν αναλυτικά βήματα")
+                    return
+            
+                # Create ZIP buffer
+                zip_buffer = io.BytesIO()
+            
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                
+                    for scenario_num, scenario_data in st.session_state.detailed_steps.items():
+                        # Create Excel for this scenario
+                        excel_buffer = io.BytesIO()
+                    
+                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                            # 1. ΑΝΑΛΥΤΙΚΑ: ΜΟΝΟ οι νέες τοποθετήσεις + το αμέσως προηγούμενο βήμα
+                            df_detailed_view = build_step_columns_with_prev(
+                                st.session_state.data, 
+                                scenario_data, 
+                                scenario_num, 
+                                base_columns=['ΟΝΟΜΑ']
+                            )
+                            df_detailed_view.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}_Αναλυτικά', index=False)
+                        
+                            # 2. ΠΛΗΡΕΣ ΙΣΤΟΡΙΚΟ: Όλες οι στήλες ΒΗΜΑ1 έως ΒΗΜΑ6 πλήρως συμπληρωμένες
+                            df_full_history = st.session_state.data[['ΟΝΟΜΑ']].copy()
+                            for step_key in sorted(scenario_data['data'].keys()):
+                                df_full_history[step_key] = scenario_data['data'][step_key]
+                            df_full_history['ΒΗΜΑ7_ΤΕΛΙΚΟ'] = scenario_data['final']
+                            df_full_history.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}_Πλήρες_Ιστορικό', index=False)
+                        
+                            # 3. ΑΝΑΛΥΤΙΚΗ ΒΑΘΜΟΛΟΓΙΑ ΒΗΜΑ7 - ανά κριτήριο
+                            if 'detailed_score' in scenario_data:
+                                detailed_scores_df = pd.DataFrame([scenario_data['detailed_score']])
+                                detailed_scores_df.to_excel(writer, sheet_name='ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7_ΑΝΑΛΥΤΙΚΗ', index=False)
+                            else:
+                                # Fallback για παλιά δεδομένα
+                                scores_df = pd.DataFrame([{
+                                    'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                                    'ΒΗΜΑ7_ΒΑΘΜΟΛΟΓΙΑ': scenario_data.get('final_score', 0),
+                                    'Περιγραφή': 'Τελική βαθμολογία για το Βήμα 7 (Αποφυγή Συγκρούσεων & Τελική Κατανομή)'
+                                }])
+                                scores_df.to_excel(writer, sheet_name='ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7', index=False)
+                    
+                        zip_file.writestr(
+                            f"ΣΕΝΑΡΙΟ_{scenario_num}_Αναλυτικά_Βήματα.xlsx",
+                            excel_buffer.getvalue()
+                        )
+                
+                    # Add comprehensive summary with all scenarios comparison
+                    if st.session_state.detailed_steps:
+                        summary_buffer = io.BytesIO()
+                        with pd.ExcelWriter(summary_buffer, engine='xlsxwriter') as writer:
+                        
+                            # Main statistics
+                            if st.session_state.statistics is not None:
+                                st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
+                        
+                            # Scenarios comparison με ΑΝΑΛΥΤΙΚΕΣ βαθμολογίες ΒΗΜΑ7
+                            scenario_comparison = []
+                            detailed_comparison = []
+                        
+                            for scenario_num, scenario_data in st.session_state.detailed_steps.items():
+                                if 'final_score' in scenario_data:
+                                    scenario_comparison.append({
+                                        'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                                        'ΒΗΜΑ7_ΤΕΛΙΚΟ_SCORE': scenario_data['final_score']
+                                    })
+                            
+                                # Αναλυτική σύγκριση ανά κριτήριο
+                                if 'detailed_score' in scenario_data:
+                                    detailed_comparison.append(scenario_data['detailed_score'])
+                        
+                            if scenario_comparison:
+                                comparison_df = pd.DataFrame(scenario_comparison)
+                                comparison_df.to_excel(writer, sheet_name='Σύγκριση_ΒΗΜΑ7_Scores', index=False)
+                        
+                            # ΝΕΟΣ: Αναλυτική σύγκριση ανά κριτήριο
+                            if detailed_comparison:
+                                detailed_df = pd.DataFrame(detailed_comparison)
+                                detailed_df.to_excel(writer, sheet_name='Αναλυτική_Σύγκριση_ΒΗΜΑ7', index=False)
+                    
+                        zip_file.writestr("ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx", summary_buffer.getvalue())
+            
+                # Download button
+                st.download_button(
+                    label="⬇️ Λήψη ZIP Αρχείου",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"Αναλυτικά_Βήματα_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
+                    mime="application/zip",
+                    key="download_detailed_file"
+                )
+            
+                st.success("✅ Το ZIP αρχείο είναι έτοιμο για λήψη!")
+            
+                # Show what's included in ZIP
+                st.markdown("""
+                **📁 Περιεχόμενα ZIP αρχείου (ΕΝΗΜΕΡΩΜΕΝΟ):**
+                - `ΣΕΝΑΡΙΟ_X_Αναλυτικά_Βήματα.xlsx` - Ένα αρχείο για κάθε σενάριο
+                  - **Φύλλο "Σενάριο_X_Αναλυτικά":** Νέες τοποθετήσεις + προηγούμενο βήμα ανά στήλη
+                  - **Φύλλο "Σενάριο_X_Πλήρες_Ιστορικό":** ΟΛΕΣ οι στήλες ΒΗΜΑ1-ΒΗΜΑ6 πλήρως συμπληρωμένες
+                  - **Φύλλο "ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7_ΑΝΑΛΥΤΙΚΗ":** Αναλυτική βαθμολογία ανά κριτήριο (Δ.Φύλο, Δ.Πληθυσμός, κτλ)
+                - `ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx` - Συνολική σύγκριση
+                  - **Φύλλο "Στατιστικά":** Τελικά στατιστικά κατανομής  
+                  - **Φύλλο "Σύγκριση_ΒΗΜΑ7_Scores":** Συνολικά scores ανά σενάριο
+                  - **Φύλλο "Αναλυτική_Σύγκριση_ΒΗΜΑ7":** Πίνακας με όλα τα κριτήρια ανά σενάριο (Δ.Φύλο, Δ.Πληθυσμός, Σπασμένη Φιλία, κτλ)
+                """)
+        
+            except Exception as e:
+                st.error(f"❌ Σφάλμα δημιουργίας ZIP: {str(e)}")
+                with st.expander("🔍 Τεχνικές Λεπτομέρειες"):
+                    st.code(traceback.format_exc())
+
         
     def validate_class_constraints(self, assignment):
         """Έλεγχος σκληρών περιορισμών: ≤25 μαθητές/τμήμα & διαφορά ≤2"""
@@ -1509,20 +1509,6 @@ class StudentDistributor:
         final_assignment = self.scenarios[best_scenario]['final']
         
         # Add final assignment to data
-        
-        # ΤΕΛΙΚΟΣ ΕΛΕΓΧΟΣ ΟΡΙΩΝ: ≤25/τμήμα και διαφορά πληθυσμού ≤2 (σύμφωνα με οδηγίες)
-        try:
-            from collections import Counter
-            _counts = Counter([c for c in final_assignment if c])
-            if _counts:
-                _max_over = max(_counts.values()) - 25
-                _pop_diff = max(_counts.values()) - min(_counts.values())
-                if _max_over > 0 or _pop_diff > 2:
-                    import streamlit as st
-                    st.warning(f"⚠️ Το επιλεγμένο σενάριο παραβιάζει όρια (>{25}/τμήμα ή διαφορά>{2}). "
-                               f"Εξετάστε αύξηση τμημάτων (max(2, ⌈N/25⌉)) ή επανεκτέλεση.")
-        except Exception as _e:
-            pass
         self.data['ΤΜΗΜΑ'] = final_assignment
         
         return self.data, self.scenarios
