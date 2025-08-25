@@ -1,6 +1,163 @@
+# === VIMA6 Excel builder (added 2025-08-25) ===
+import re
+import traceback
+from io import BytesIO
+import pandas as pd
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+
+def _num(s, pat):
+    m = re.search(pat, s)
+    return int(m.group(1)) if m else 999
+
+def _ordered_steps(keys):
+    # Sort by step number in "ΒΗΜΑx"
+    return sorted(keys, key=lambda k: _num(k, r"ΒΗΜΑ(\d+)"))
+
+def _compose_new_plus_prev(step_series_list):
+    """
+    Build **cumulative** display columns:
+    - col[0] = step0 (non-empty values only)
+    - For i>0: col[i] starts as col[i-1] (carry-forward), then overlay non-empty values from step i.
+    This matches the requirement:
+      Βήμα 2 = (ό,τι υπάρχει στο Βήμα 1) + (οι νέες τοποθετήσεις του Βήματος 2)
+      Βήμα 3 = (ό,τι υπάρχει στο Βήμα 2) + (οι νέες του Βήματος 3), κ.ο.κ.
+    """
+    import pandas as pd
+    out_cols = []
+    prev_col = None
+    for i, curr in enumerate(step_series_list):
+        curr = curr.astype(str).replace({None: ""}).fillna("")
+        if i == 0:
+            col = pd.Series([""] * len(curr), index=curr.index, dtype=object)
+            non_empty = curr != ""
+            col[non_empty] = curr[non_empty]
+        else:
+            # start from previous display column (carry-forward cumulative state)
+            col = prev_col.copy()
+            non_empty = curr != ""
+            # overlay only non-empty values of current step
+            col[non_empty] = curr[non_empty]
+        out_cols.append(col)
+        prev_col = col
+    return out_cols
+
+def build_vima6_excel_bytes(base_df, detailed_steps, step7_scores=None):
+    """
+    Creates Excel bytes with:
+      - Sheet 'ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ' (cumulative per step): 
+        Βήμα N = (ό,τι υπάρχει στο Βήμα N-1) + (οι μη-κενές τιμές του Βήματος N)
+      - Optional sheet 'VIMA7_SCORE_ΣΥΝΟΨΗ'
+    Supports input shapes:
+      (A) working_app style: {"ΒΗΜΑ1_ΣΕΝΑΡΙΟ_1": df, ...}
+      (B) streamlit_app style: { scen: {"data": {...}, "step7_score": int, ...}, ...}
+    """
+    import pandas as pd
+    from io import BytesIO
+    from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    out = base_df[['ΟΝΟΜΑ']].copy()
+
+    if detailed_steps and all(isinstance(k, str) for k in detailed_steps.keys()):
+        # --- working_app style ---
+        scen_to_steps = {}
+        for key, df_k in detailed_steps.items():
+            m = re.search(r"_ΣΕΝΑΡΙΟ_(\d+)$", key)
+            scen = int(m.group(1)) if m else 1
+            scen_to_steps.setdefault(scen, {})[key] = df_k
+
+        for scen, step_map in sorted(scen_to_steps.items()):
+            ordered = _ordered_steps(step_map.keys())
+            series_list = []
+            for step_key in ordered:
+                df_k = step_map[step_key]
+                if step_key in df_k.columns:
+                    s = df_k[step_key]
+                else:
+                    s = pd.Series([""] * len(base_df), index=base_df.index, dtype=object)
+                series_list.append(s.astype(str).replace({None: ""}).fillna(""))
+            cols = _compose_new_plus_prev(series_list)  # cumulative
+            for step_key, col in zip(ordered, cols):
+                out[step_key] = col
+    else:
+        # --- streamlit_app style ---
+        for scen_num, scen_data in sorted(detailed_steps.items()):
+            view = None
+            try:
+                view = build_analytics_view_upto6_with_score(base_df, scen_data, scen_num)
+            except Exception:
+                data = scen_data.get('data', {})
+                step_keys = sorted(
+                    [k for k in data.keys() if isinstance(k, str) and k.startswith("ΒΗΜΑ")],
+                    key=lambda k: _num(k, r"ΒΗΜΑ(\d+)")
+                )
+                if step_keys:
+                    series_list = []
+                    for k in step_keys:
+                        s = pd.Series(data.get(k, [""] * len(base_df)))
+                        series_list.append(s.astype(str).replace({None: ""}).fillna(""))
+                    cols = _compose_new_plus_prev(series_list)
+                    view = pd.DataFrame({"ΟΝΟΜΑ": base_df["ΟΝΟΜΑ"]})
+                    for k, c in zip(step_keys, cols):
+                        view[k] = c
+                else:
+                    view = pd.DataFrame({"ΟΝΟΜΑ": base_df["ΟΝΟΜΑ"]})
+            for c in [c for c in view.columns if c != 'ΟΝΟΜΑ']:
+                out[c] = view[c]
+
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+        out.to_excel(writer, sheet_name="ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ", index=False)
+        ws = writer.sheets["ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ"]
+        ws.freeze_panes = "B2"
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        max_col = ws.max_column
+        max_row = ws.max_row
+        for col_idx in range(2, max_col + 1):
+            for row_idx in range(2, max_row + 1):
+                ws.cell(row=row_idx, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
+        for col_idx in range(1, max_col + 1):
+            col_letter = get_column_letter(col_idx)
+            max_len = 0
+            for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=col_idx, max_col=col_idx):
+                val = row[0].value
+                max_len = max(max_len, len(str(val)) if val is not None else 0)
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+        # Optional VIMA7 scores
+        scores_rows = []
+        if detailed_steps and not all(isinstance(k, str) for k in detailed_steps.keys()):
+            for scen_num, scen_data in sorted(detailed_steps.items()):
+                sc = scen_data.get("step7_score")
+                if sc is not None:
+                    scores_rows.append({"ΣΕΝΑΡΙΟ": f"ΣΕΝΑΡΙΟ_{scen_num}", "ΤΕΛΙΚΗ_ΒΑΘΜΟΛΟΓΙΑ_ΣΕΝΑΡΙΟΥ": sc})
+        if step7_scores:
+            for scen_num, sc in sorted(step7_scores.items()):
+                scores_rows.append({"ΣΕΝΑΡΙΟ": f"ΣΕΝΑΡΙΟ_{scen_num}", "ΤΕΛΙΚΗ_ΒΑΘΜΟΛΟΓΙΑ_ΣΕΝΑΡΙΟΥ": sc})
+        if scores_rows:
+            pd.DataFrame(scores_rows).to_excel(writer, sheet_name="VIMA7_SCORE_ΣΥΝΟΨΗ", index=False)
+            ws2 = writer.sheets["VIMA7_SCORE_ΣΥΝΟΨΗ"]
+            ws2.freeze_panes = "A2"
+            for cell in ws2[1]:
+                cell.font = Font(bold=True)
+            for col_idx in range(1, ws2.max_column + 1):
+                from openpyxl.utils import get_column_letter as _gcl2
+                col_letter = _gcl2(col_idx)
+                max_len = 0
+                for row in ws2.iter_rows(min_row=1, max_row=ws2.max_row, min_col=col_idx, max_col=col_idx):
+                    val = row[0].value
+                    max_len = max(max_len, len(str(val)) if val is not None else 0)
+                ws2.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+    bio.seek(0)
+    return bio.getvalue()
+
 # -*- coding: utf-8 -*-
 """
 ΛΕΙΤΟΥΡΓΙΚΗ ΕΚΔΟΣΗ - Με βήματα ανάθεσης αλλά χωρίς περίπλοκα γραφήματα
+ΠΡΟΣΤΕΘΗΚΕ: Κουμπί για αναλυτικά βήματα (VIMA6 format)
 """
 
 import streamlit as st
@@ -10,81 +167,6 @@ import zipfile
 import io
 from typing import Dict, List, Tuple, Any
 import traceback
-import math
-import re
-
-# === Helper: Export 'ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ' Excel in the required format ===
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font
-from openpyxl.utils import get_column_letter
-import re as _re
-
-def _build_analytika_df(df, scenario_number=None, final_column=None):
-    """Return a narrow df with ['ΟΝΟΜΑ'] + ΒΗΜΑ*_ΣΕΝΑΡΙΟ_* columns in numeric order.
-    If some steps are missing, they are skipped. If only a final column exists, we rename it to ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_number or 1}.
-    """
-    base = df.copy()
-    if 'ΟΝΟΜΑ' not in base.columns:
-        # try to find a name-like column
-        for c in base.columns:
-            if str(c).strip().upper().startswith('ΟΝΟΜ'):
-                base = base.rename(columns={c: 'ΟΝΟΜΑ'})
-                break
-    cols = ['ΟΝΟΜΑ']
-    # collect columns like ΒΗΜΑ{n}_ΣΕΝΑΡΙΟ_{k}
-    step_cols = []
-    for c in base.columns:
-        m = _re.match(r'^ΒΗΜΑ(\d+)_ΣΕΝΑΡΙΟ_(\d+)$', str(c))
-        if m:
-            n = int(m.group(1))
-            scen = int(m.group(2))
-            if scenario_number is None or scen == scenario_number:
-                step_cols.append((n, scen, c))
-    # sort by step number
-    step_cols.sort(key=lambda x: x[0])
-    cols += [c for _,_,c in step_cols]
-    # if we have only a final column (e.g., 'ΒΗΜΑ6_ΤΜΗΜΑ' or custom), add it as ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_number or 1}
-    if final_column and final_column in base.columns and not any(n==6 for n,_,_ in step_cols):
-        scen = scenario_number or 1
-        new_col = f"ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scen}"
-        base[new_col] = base[final_column]
-        cols.append(new_col)
-    # de-duplicate & keep existent
-    cols = [c for c in cols if c in base.columns]
-    return base[cols]
-
-def export_analytika_vimata_excel(df, scenario_number=1, final_column=None, filename="VIMA6_from_ALL_SHEETS.xlsx") -> BytesIO:
-    buf = BytesIO()
-    slim = _build_analytika_df(df, scenario_number=scenario_number, final_column=final_column)
-    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-        slim.to_excel(writer, index=False, sheet_name='ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ')
-    buf.seek(0)
-    # Format with openpyxl
-    wb = load_workbook(buf)
-    ws = wb['ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ']
-    ws.freeze_panes = 'B2'
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    center = Alignment(horizontal='center')
-    for col in range(2, ws.max_column+1):
-        for r in range(2, ws.max_row+1):
-            ws.cell(r, col).alignment = center
-    from math import inf
-    for col in range(1, ws.max_column+1):
-        letter = get_column_letter(col)
-        max_len = 0
-        for cell in ws[letter]:
-            v = str(cell.value) if cell.value is not None else ''
-            if len(v) > max_len:
-                max_len = len(v)
-        ws.column_dimensions[letter].width = max(10, min(35, max_len+2))
-    out = BytesIO()
-    wb.save(out)
-    out.seek(0)
-    out.name = filename
-    return out
-# === end helper ===
 
 # Import των modules που χρειάζονται
 try:
@@ -109,6 +191,9 @@ def init_session_state():
         st.session_state.current_step = 0
     if 'results' not in st.session_state:
         st.session_state.results = {}
+    # ΠΡΟΣΤΕΘΗΚΕ: Για αποθήκευση ενδιάμεσων βημάτων
+    if 'detailed_steps' not in st.session_state:
+        st.session_state.detailed_steps = {}
 
 def safe_load_data(uploaded_file):
     """Ασφαλής φόρτωση και κανονικοποίηση δεδομένων"""
@@ -210,7 +295,7 @@ def display_basic_info(df):
     if 'ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ' in df.columns:
         teachers_count = len(df[df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'] == 'Ν'])
         teachers_list = df[df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'] == 'Ν']['ΟΝΟΜΑ'].tolist() if 'ΟΝΟΜΑ' in df.columns else []
-        st.write(f"**DEBUG - ΠΑΙΔΙΆ ΕΚΠΑΙΔΕΥΤΙΚΩΝ:** {teachers_count} άτομα")
+        st.write(f"**DEBUG - ΠΑΙΔΙΈ ΕΚΠΑΙΔΕΥΤΙΚΏΝ:** {teachers_count} άτομα")
         st.write(f"**DEBUG - Unique values:** {df['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'].unique()}")
         if teachers_list:
             st.write(f"**DEBUG - Παιδιά εκπαιδευτικών:** {teachers_list}")
@@ -303,68 +388,126 @@ def display_scenario_stats(df, scenario_col, scenario_name):
         st.code(traceback.format_exc())
 
 def run_simple_assignment(df):
-    """Απλή, K-ready ανάθεση με auto num_classes = ceil(N/25)."""
+    """Απλή ανάθεση με debug και βελτιωμένη λογική"""
     try:
-        st.subheader("🚀 Εκτέλεση Απλής Ανάθεσης (K τμήματα)")
+        st.subheader("🚀 Εκτέλεση Απλής Ανάθεσης")
+        
         progress_bar = st.progress(0)
         status_text = st.empty()
-
-        df_result = df.copy()
-        df_result['ΤΜΗΜΑ'] = None
-
-        # Υπολογισμός K
-        n = len(df_result)
-        num_classes = max(1, math.ceil(n/25))
-        classes = [f"Α{i+1}" for i in range(num_classes)]
-        st.write(f"**DEBUG:** num_classes = {num_classes}, classes = {classes}")
-
-        # Μετρητές
-        counts_total = {c: 0 for c in classes}
-        counts_boys = {c: 0 for c in classes}
-        counts_girls = {c: 0 for c in classes}
-
-        def pick_best_class(pref_gender=None):
-            # Επιλογή τμήματος με ελάχιστο φορτίο (και <=25)
-            candidate_classes = [c for c in classes if counts_total[c] < 25] or classes
-            if pref_gender == 'Α':
-                return min(candidate_classes, key=lambda c: (counts_boys[c], counts_total[c]))
-            elif pref_gender == 'Κ':
-                return min(candidate_classes, key=lambda c: (counts_girls[c], counts_total[c]))
-            else:
-                return min(candidate_classes, key=lambda c: counts_total[c])
-
-        # Ανάθεση παιδιών εκπ/κών σε round-robin
+        
+        # Βήμα 1: Παιδιά εκπαιδευτικών
         status_text.text("Βήμα 1: Ανάθεση παιδιών εκπαιδευτικών...")
         progress_bar.progress(20)
-        teacher_idxs = df_result.index[df_result.get('ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ', 'Ο') == 'Ν'].tolist()
-        rr = 0
-        for idx in teacher_idxs:
-            c = classes[rr % num_classes]
-            df_result.loc[idx, 'ΤΜΗΜΑ'] = c
-            counts_total[c] += 1
-            g = df_result.loc[idx, 'ΦΥΛΟ'] if 'ΦΥΛΟ' in df_result.columns else None
-            if g == 'Α': counts_boys[c] += 1
-            if g == 'Κ': counts_girls[c] += 1
-            rr += 1
-
-        # Υπόλοιποι μαθητές με ισορροπία
-        status_text.text("Βήμα 2: Ανάθεση υπολοίπων...")
-        progress_bar.progress(60)
-        remaining = df_result.index[df_result['ΤΜΗΜΑ'].isna()].tolist()
-        for idx in remaining:
-            g = df_result.loc[idx, 'ΦΥΛΟ'] if 'ΦΥΛΟ' in df_result.columns else None
-            c = pick_best_class(pref_gender=g if g in ('Α','Κ') else None)
-            df_result.loc[idx, 'ΤΜΗΜΑ'] = c
-            counts_total[c] += 1
-            if g == 'Α': counts_boys[c] += 1
-            if g == 'Κ': counts_girls[c] += 1
-
+        
+        df_result = df.copy()
+        df_result['ΤΜΗΜΑ'] = None
+        
+        # ΑΠΟΘΗΚΕΥΣΗ ΒΗΜΑ 1 (για αναλυτικά βήματα)
+        df_step1 = df_result.copy()
+        df_step1['ΒΗΜΑ1_ΣΕΝΑΡΙΟ_1'] = None
+        
+        # Debug: Έλεγχος παιδιών εκπαιδευτικών
+        if 'ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ' in df_result.columns:
+            teacher_kids = df_result[df_result['ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ'] == 'Ν'].index.tolist()
+            st.write(f"**DEBUG - Παιδιά εκπαιδευτικών βρέθηκαν:** {len(teacher_kids)}")
+            
+            if teacher_kids and 'ΟΝΟΜΑ' in df_result.columns:
+                teacher_names = df_result.loc[teacher_kids, 'ΟΝΟΜΑ'].tolist()
+                st.write(f"**DEBUG - Ονόματα:** {teacher_names}")
+            
+            # Απλή κατανομή παιδιών εκπαιδευτικών
+            for i, idx in enumerate(teacher_kids):
+                tmima = 'Α1' if i % 2 == 0 else 'Α2'
+                df_result.loc[idx, 'ΤΜΗΜΑ'] = tmima
+                df_step1.loc[idx, 'ΒΗΜΑ1_ΣΕΝΑΡΙΟ_1'] = tmima  # Για αναλυτικά
+                st.write(f"**DEBUG - Ανάθεση:** {df_result.loc[idx, 'ΟΝΟΜΑ'] if 'ΟΝΟΜΑ' in df_result.columns else idx} → {tmima}")
+        else:
+            st.warning("⚠️ Δεν βρέθηκε στήλη ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ")
+        
+        # ΑΠΟΘΗΚΕΥΣΗ ΓΙΑ ΑΝΑΛΥΤΙΚΑ ΒΗΜΑΤΑ
+        st.session_state.detailed_steps['ΒΗΜΑ1_ΣΕΝΑΡΙΟ_1'] = df_step1.copy()
+        
+        progress_bar.progress(40)
+        
+        # Βήμα 2: Υπόλοιποι μαθητές
+        status_text.text("Βήμα 2: Ανάθεση υπόλοιπων μαθητών...")
+        
+        remaining = df_result[df_result['ΤΜΗΜΑ'].isna()].index.tolist()
+        st.write(f"**DEBUG - Υπόλοιποι μαθητές:** {len(remaining)}")
+        
+        # ΑΠΟΘΗΚΕΥΣΗ ΒΗΜΑ 2
+        df_step2 = df_result.copy()
+        df_step2['ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = df_step2['ΤΜΗΜΑ']
+        
+        if 'ΦΥΛΟ' in df_result.columns:
+            # Διαχωρισμός ανά φύλο
+            boys = [idx for idx in remaining if df_result.loc[idx, 'ΦΥΛΟ'] == 'Α']
+            girls = [idx for idx in remaining if df_result.loc[idx, 'ΦΥΛΟ'] == 'Κ']
+            
+            st.write(f"**DEBUG - Αγόρια για ανάθεση:** {len(boys)}")
+            st.write(f"**DEBUG - Κορίτσια για ανάθεση:** {len(girls)}")
+            
+            # Κατανομή αγοριών
+            for i, idx in enumerate(boys):
+                current_a1_boys = len(df_result[(df_result['ΤΜΗΜΑ'] == 'Α1') & (df_result['ΦΥΛΟ'] == 'Α')])
+                current_a2_boys = len(df_result[(df_result['ΤΜΗΜΑ'] == 'Α2') & (df_result['ΦΥΛΟ'] == 'Α')])
+                
+                if current_a1_boys <= current_a2_boys:
+                    df_result.loc[idx, 'ΤΜΗΜΑ'] = 'Α1'
+                    df_step2.loc[idx, 'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = 'Α1'
+                else:
+                    df_result.loc[idx, 'ΤΜΗΜΑ'] = 'Α2'
+                    df_step2.loc[idx, 'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = 'Α2'
+            
+            progress_bar.progress(60)
+            
+            # Κατανομή κοριτσιών
+            for i, idx in enumerate(girls):
+                current_a1_girls = len(df_result[(df_result['ΤΜΗΜΑ'] == 'Α1') & (df_result['ΦΥΛΟ'] == 'Κ')])
+                current_a2_girls = len(df_result[(df_result['ΤΜΗΜΑ'] == 'Α2') & (df_result['ΦΥΛΟ'] == 'Κ')])
+                
+                if current_a1_girls <= current_a2_girls:
+                    df_result.loc[idx, 'ΤΜΗΜΑ'] = 'Α1'
+                    df_step2.loc[idx, 'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = 'Α1'
+                else:
+                    df_result.loc[idx, 'ΤΜΗΜΑ'] = 'Α2'
+                    df_step2.loc[idx, 'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = 'Α2'
+        else:
+            st.warning("⚠️ Δεν βρέθηκε στήλη ΦΥΛΟ - απλή εναλλακτική κατανομή")
+            # Απλή εναλλακτική κατανομή
+            for i, idx in enumerate(remaining):
+                tmima = 'Α1' if i % 2 == 0 else 'Α2'
+                df_result.loc[idx, 'ΤΜΗΜΑ'] = tmima
+                df_step2.loc[idx, 'ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = tmima
+        
+        # ΑΠΟΘΗΚΕΥΣΗ ΓΙΑ ΑΝΑΛΥΤΙΚΑ ΒΗΜΑΤΑ
+        st.session_state.detailed_steps['ΒΗΜΑ2_ΣΕΝΑΡΙΟ_1'] = df_step2.copy()
+        
+        progress_bar.progress(80)
+        
+        # Τελικοποίηση και έλεγχος
+        status_text.text("Τελικοποίηση...")
+        
+        # ΑΠΟΘΗΚΕΥΣΗ ΤΕΛΙΚΟΥ ΒΗΜΑΤΟΣ
+        df_final = df_result.copy()
+        df_final['ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1'] = df_final['ΤΜΗΜΑ']
+        st.session_state.detailed_steps['ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1'] = df_final.copy()
+        
+        # Έλεγχος αποτελεσμάτων
+        a1_count = len(df_result[df_result['ΤΜΗΜΑ'] == 'Α1'])
+        a2_count = len(df_result[df_result['ΤΜΗΜΑ'] == 'Α2'])
+        unassigned = len(df_result[df_result['ΤΜΗΜΑ'].isna()])
+        
+        st.write(f"**DEBUG - Τελικά αποτελέσματα:**")
+        st.write(f"- Α1: {a1_count} μαθητές")
+        st.write(f"- Α2: {a2_count} μαθητές") 
+        st.write(f"- Ατοποθέτητοι: {unassigned} μαθητές")
+        
         progress_bar.progress(100)
         status_text.text("✅ Ανάθεση ολοκληρώθηκε!")
-
-        # Επιστροφή αποτελέσματος
+        
         return df_result
-
+        
     except Exception as e:
         st.error(f"Σφάλμα στην ανάθεση: {e}")
         st.code(traceback.format_exc())
@@ -416,6 +559,37 @@ def calculate_simple_score(df, tmima_col):
         st.error(f"Σφάλμα στον υπολογισμό score: {e}")
         return None
 
+def create_detailed_steps_workbook():
+    """ΝΕΟΣ ΚΩΔΙΚΑΣ - Δημιουργία Excel workbook με όλα τα αναλυτικά βήματα"""
+    try:
+        excel_buffer = io.BytesIO()
+        
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            # Ταξινόμηση των βημάτων για σωστή σειρά
+            step_order = ['ΒΗΜΑ1', 'ΒΗΜΑ2', 'ΒΗΜΑ3', 'ΒΗΜΑ4', 'ΒΗΜΑ5', 'ΒΗΜΑ6']
+            
+            # Οργάνωση των sheets ανά βήμα και σενάριο
+            for step in step_order:
+                sheets_for_step = []
+                for sheet_name, df in st.session_state.detailed_steps.items():
+                    if step in sheet_name:
+                        sheets_for_step.append((sheet_name, df))
+                
+                # Ταξινόμηση ανά σενάριο
+                sheets_for_step.sort(key=lambda x: x[0])
+                
+                for sheet_name, df in sheets_for_step:
+                    # Περιορισμός μήκους ονόματος sheet (Excel limit)
+                    safe_sheet_name = sheet_name[:31] if len(sheet_name) > 31 else sheet_name
+                    df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+        
+        excel_buffer.seek(0)
+        return excel_buffer.getvalue()
+        
+    except Exception as e:
+        st.error(f"Σφάλμα στη δημιουργία αναλυτικών βημάτων: {e}")
+        return None
+
 def create_download_package(df, scenario_name="ΣΕΝΑΡΙΟ_1"):
     """Δημιουργία αρχείου download"""
     try:
@@ -449,7 +623,7 @@ def main():
     init_session_state()
     
     st.title("🎓 Σύστημα Ανάθεσης Μαθητών σε Τμήματα")
-    st.markdown("*Λειτουργική έκδοση με απλή ανάθεση*")
+    st.markdown("*Λειτουργική έκδοση με απλή ανάθεση + Αναλυτικά Βήματα*")
     st.markdown("---")
     
     # Sidebar
@@ -575,8 +749,10 @@ def main():
                 with st.expander("📋 Πλήρη Αποτελέσματα"):
                     st.dataframe(result_df, use_container_width=True)
                 
-                # Download
+                # Download Section
                 st.sidebar.subheader("💾 Λήψη Αποτελεσμάτων")
+                
+                # ΚΟΥΜΠΙ 1: Δημιουργία Αρχείου (το υπάρχον)
                 if st.sidebar.button("📥 Δημιουργία Αρχείου"):
                     with st.spinner("Δημιουργία αρχείου..."):
                         zip_data = create_download_package(result_df)
@@ -587,22 +763,23 @@ def main():
                                 file_name="Αποτελέσματα_Ανάθεσης.zip",
                                 mime="application/zip"
                             )
-
-                            # ΝΕΟ: Εξαγωγή «ΑΝΑΛΥΤΙΚΑ ΒΗΜΑΤΑ (VIMA6)»
-                            st.sidebar.markdown("---")
-                            st.sidebar.caption("Εξαγωγή συγκεκριμένης μορφής Excel")
-                            # σε αυτή την απλή έκδοση, χρησιμοποιούμε μόνο τη στήλη ΤΜΗΜΑ ως ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1
-                            tmp_df = result_df.copy()
-                            if 'ΤΜΗΜΑ' in tmp_df.columns:
-                                buf2 = export_analytika_vimata_excel(tmp_df.rename(columns={'ΤΜΗΜΑ':'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1'}), scenario_number=1, final_column='ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1')
-                            else:
-                                buf2 = export_analytika_vimata_excel(tmp_df, scenario_number=1, final_column=None)
+                
+                # ΚΟΥΜΠΙ 2: Αναλυτικά Βήματα (ΤΟ ΝΕΟ ΚΟΥΜΠΙ)
+                if st.sidebar.button("📋 Αναλυτικά Βήματα (VIMA6)", 
+                                    help="Κατεβάστε Excel με όλα τα ενδιάμεσα βήματα"):
+                    with st.spinner("Δημιουργία αρχείου αναλυτικών βημάτων..."):
+                        detailed_excel = create_detailed_steps_workbook()
+                        if detailed_excel:
                             st.sidebar.download_button(
-                                label="📋 Αναλυτικά Βήματα (VIMA6)",
-                                data=buf2.getvalue(),
-                                file_name=buf2.name,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                label="⬇️ Λήψη Αναλυτικών Βημάτων",
+                                data=detailed_excel,
+                                file_name="VIMA6_from_ALL_SHEETS.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="detailed_steps_download"
                             )
+                            st.sidebar.success("✅ Αρχείο αναλυτικών βημάτων έτοιμο!")
+                        else:
+                            st.sidebar.error("❌ Σφάλμα στη δημιουργία αρχείου")
             
             # Reset
             if st.sidebar.button("🔄 Επαναφορά"):
@@ -632,7 +809,27 @@ def main():
             2. Κατανέμει τους υπόλοιπους μαθητές με βάση το φύλο
             3. Υπολογίζει score βάσει ισορροπίας τμημάτων
             4. Δημιουργεί αρχεία Excel με αποτελέσματα
+            
+            ### 🔥 ΝΕΟ: Αναλυτικά Βήματα!
+            Κατεβάστε το αρχείο **VIMA6_from_ALL_SHEETS.xlsx** που περιέχει:
+            - Όλα τα ενδιάμεσα βήματα της ανάθεσης
+            - Ξεχωριστό sheet για κάθε βήμα
+            - Format συμβατό με το υπάρχον σύστημά σας
             """)
 
 if __name__ == "__main__":
     main()
+
+def create_detailed_steps_workbook():
+    """Δημιουργεί ΜΟΝΟ ένα Excel με 1 φύλλο 'ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ' (VIMA6) + προαιρετικό 'VIMA7_SCORE_ΣΥΝΟΨΗ'."""
+    try:
+        import streamlit as st
+        if getattr(st.session_state, "data", None) is None or not getattr(st.session_state, "detailed_steps", {}):
+            return None
+        excel_bytes = build_vima6_excel_bytes(st.session_state.data, st.session_state.detailed_steps, step7_scores=None)
+        return excel_bytes
+    except Exception as e:
+        import streamlit as st, traceback
+        st.error(f"Σφάλμα στη δημιουργία VIMA6 αρχείου: {e}")
+        st.code(traceback.format_exc())
+        return None

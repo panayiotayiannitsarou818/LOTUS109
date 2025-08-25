@@ -1,3 +1,159 @@
+# === VIMA6 Excel builder (added 2025-08-25) ===
+import re
+import traceback
+from io import BytesIO
+import pandas as pd
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+
+def _num(s, pat):
+    m = re.search(pat, s)
+    return int(m.group(1)) if m else 999
+
+def _ordered_steps(keys):
+    # Sort by step number in "ΒΗΜΑx"
+    return sorted(keys, key=lambda k: _num(k, r"ΒΗΜΑ(\d+)"))
+
+def _compose_new_plus_prev(step_series_list):
+    """
+    Build **cumulative** display columns:
+    - col[0] = step0 (non-empty values only)
+    - For i>0: col[i] starts as col[i-1] (carry-forward), then overlay non-empty values from step i.
+    This matches the requirement:
+      Βήμα 2 = (ό,τι υπάρχει στο Βήμα 1) + (οι νέες τοποθετήσεις του Βήματος 2)
+      Βήμα 3 = (ό,τι υπάρχει στο Βήμα 2) + (οι νέες του Βήματος 3), κ.ο.κ.
+    """
+    import pandas as pd
+    out_cols = []
+    prev_col = None
+    for i, curr in enumerate(step_series_list):
+        curr = curr.astype(str).replace({None: ""}).fillna("")
+        if i == 0:
+            col = pd.Series([""] * len(curr), index=curr.index, dtype=object)
+            non_empty = curr != ""
+            col[non_empty] = curr[non_empty]
+        else:
+            # start from previous display column (carry-forward cumulative state)
+            col = prev_col.copy()
+            non_empty = curr != ""
+            # overlay only non-empty values of current step
+            col[non_empty] = curr[non_empty]
+        out_cols.append(col)
+        prev_col = col
+    return out_cols
+
+def build_vima6_excel_bytes(base_df, detailed_steps, step7_scores=None):
+    """
+    Creates Excel bytes with:
+      - Sheet 'ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ' (cumulative per step): 
+        Βήμα N = (ό,τι υπάρχει στο Βήμα N-1) + (οι μη-κενές τιμές του Βήματος N)
+      - Optional sheet 'VIMA7_SCORE_ΣΥΝΟΨΗ'
+    Supports input shapes:
+      (A) working_app style: {"ΒΗΜΑ1_ΣΕΝΑΡΙΟ_1": df, ...}
+      (B) streamlit_app style: { scen: {"data": {...}, "step7_score": int, ...}, ...}
+    """
+    import pandas as pd
+    from io import BytesIO
+    from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    out = base_df[['ΟΝΟΜΑ']].copy()
+
+    if detailed_steps and all(isinstance(k, str) for k in detailed_steps.keys()):
+        # --- working_app style ---
+        scen_to_steps = {}
+        for key, df_k in detailed_steps.items():
+            m = re.search(r"_ΣΕΝΑΡΙΟ_(\d+)$", key)
+            scen = int(m.group(1)) if m else 1
+            scen_to_steps.setdefault(scen, {})[key] = df_k
+
+        for scen, step_map in sorted(scen_to_steps.items()):
+            ordered = _ordered_steps(step_map.keys())
+            series_list = []
+            for step_key in ordered:
+                df_k = step_map[step_key]
+                if step_key in df_k.columns:
+                    s = df_k[step_key]
+                else:
+                    s = pd.Series([""] * len(base_df), index=base_df.index, dtype=object)
+                series_list.append(s.astype(str).replace({None: ""}).fillna(""))
+            cols = _compose_new_plus_prev(series_list)  # cumulative
+            for step_key, col in zip(ordered, cols):
+                out[step_key] = col
+    else:
+        # --- streamlit_app style ---
+        for scen_num, scen_data in sorted(detailed_steps.items()):
+            view = None
+            try:
+                view = build_analytics_view_upto6_with_score(base_df, scen_data, scen_num)
+            except Exception:
+                data = scen_data.get('data', {})
+                step_keys = sorted(
+                    [k for k in data.keys() if isinstance(k, str) and k.startswith("ΒΗΜΑ")],
+                    key=lambda k: _num(k, r"ΒΗΜΑ(\d+)")
+                )
+                if step_keys:
+                    series_list = []
+                    for k in step_keys:
+                        s = pd.Series(data.get(k, [""] * len(base_df)))
+                        series_list.append(s.astype(str).replace({None: ""}).fillna(""))
+                    cols = _compose_new_plus_prev(series_list)
+                    view = pd.DataFrame({"ΟΝΟΜΑ": base_df["ΟΝΟΜΑ"]})
+                    for k, c in zip(step_keys, cols):
+                        view[k] = c
+                else:
+                    view = pd.DataFrame({"ΟΝΟΜΑ": base_df["ΟΝΟΜΑ"]})
+            for c in [c for c in view.columns if c != 'ΟΝΟΜΑ']:
+                out[c] = view[c]
+
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+        out.to_excel(writer, sheet_name="ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ", index=False)
+        ws = writer.sheets["ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ"]
+        ws.freeze_panes = "B2"
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        max_col = ws.max_column
+        max_row = ws.max_row
+        for col_idx in range(2, max_col + 1):
+            for row_idx in range(2, max_row + 1):
+                ws.cell(row=row_idx, column=col_idx).alignment = Alignment(horizontal="center", vertical="center")
+        for col_idx in range(1, max_col + 1):
+            col_letter = get_column_letter(col_idx)
+            max_len = 0
+            for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=col_idx, max_col=col_idx):
+                val = row[0].value
+                max_len = max(max_len, len(str(val)) if val is not None else 0)
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+        # Optional VIMA7 scores
+        scores_rows = []
+        if detailed_steps and not all(isinstance(k, str) for k in detailed_steps.keys()):
+            for scen_num, scen_data in sorted(detailed_steps.items()):
+                sc = scen_data.get("step7_score")
+                if sc is not None:
+                    scores_rows.append({"ΣΕΝΑΡΙΟ": f"ΣΕΝΑΡΙΟ_{scen_num}", "ΤΕΛΙΚΗ_ΒΑΘΜΟΛΟΓΙΑ_ΣΕΝΑΡΙΟΥ": sc})
+        if step7_scores:
+            for scen_num, sc in sorted(step7_scores.items()):
+                scores_rows.append({"ΣΕΝΑΡΙΟ": f"ΣΕΝΑΡΙΟ_{scen_num}", "ΤΕΛΙΚΗ_ΒΑΘΜΟΛΟΓΙΑ_ΣΕΝΑΡΙΟΥ": sc})
+        if scores_rows:
+            pd.DataFrame(scores_rows).to_excel(writer, sheet_name="VIMA7_SCORE_ΣΥΝΟΨΗ", index=False)
+            ws2 = writer.sheets["VIMA7_SCORE_ΣΥΝΟΨΗ"]
+            ws2.freeze_panes = "A2"
+            for cell in ws2[1]:
+                cell.font = Font(bold=True)
+            for col_idx in range(1, ws2.max_column + 1):
+                from openpyxl.utils import get_column_letter as _gcl2
+                col_letter = _gcl2(col_idx)
+                max_len = 0
+                for row in ws2.iter_rows(min_row=1, max_row=ws2.max_row, min_col=col_idx, max_col=col_idx):
+                    val = row[0].value
+                    max_len = max(max_len, len(str(val)) if val is not None else 0)
+                ws2.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+    bio.seek(0)
+    return bio.getvalue()
+
 # -*- coding: utf-8 -*-
 """
 Comprehensive Student Assignment System - Streamlit Application
@@ -1091,3 +1247,35 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# === Universal VIMA6 download section (added 2025-08-25) ===
+try:
+    import streamlit as st
+    if not st.session_state.get("_vima6_button_added", False):
+        if getattr(st.session_state, "data", None) is not None and getattr(st.session_state, "detailed_steps", {}):
+            st.markdown("---")
+            st.markdown("### 📥 Ενιαίο Excel τύπου VIMA6")
+            st.info("Ένα αρχείο με 1 φύλλο 'ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ' (νέες τοποθετήσεις + αμέσως προηγούμενο) και προαιρετικά 'VIMA7_SCORE_ΣΥΝΟΨΗ'.")
+            scores = {}
+            try:
+                for scen_num, scen_data in st.session_state.detailed_steps.items():
+                    if isinstance(scen_data, dict) and 'step7_score' in scen_data:
+                        scores[scen_num] = scen_data['step7_score']
+            except Exception:
+                pass
+            try:
+                excel_bytes = build_vima6_excel_bytes(st.session_state.data, st.session_state.detailed_steps, step7_scores=scores or None)
+                st.download_button(
+                    "⬇️ Λήψη VIMA6_from_ALL_SHEETS.xlsx",
+                    data=excel_bytes,
+                    file_name="VIMA6_from_ALL_SHEETS.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="download_vima6_global"
+                )
+            except Exception as e:
+                st.error(f"❌ Σφάλμα δημιουργίας VIMA6: {e}")
+                st.code(traceback.format_exc())
+        st.session_state["_vima6_button_added"] = True
+except Exception:
+    pass
