@@ -11,6 +11,80 @@ import io
 from typing import Dict, List, Tuple, Any
 import traceback
 import math
+import re
+
+# === Helper: Export 'ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ' Excel in the required format ===
+from io import BytesIO
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+import re as _re
+
+def _build_analytika_df(df, scenario_number=None, final_column=None):
+    """Return a narrow df with ['ΟΝΟΜΑ'] + ΒΗΜΑ*_ΣΕΝΑΡΙΟ_* columns in numeric order.
+    If some steps are missing, they are skipped. If only a final column exists, we rename it to ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_number or 1}.
+    """
+    base = df.copy()
+    if 'ΟΝΟΜΑ' not in base.columns:
+        # try to find a name-like column
+        for c in base.columns:
+            if str(c).strip().upper().startswith('ΟΝΟΜ'):
+                base = base.rename(columns={c: 'ΟΝΟΜΑ'})
+                break
+    cols = ['ΟΝΟΜΑ']
+    # collect columns like ΒΗΜΑ{n}_ΣΕΝΑΡΙΟ_{k}
+    step_cols = []
+    for c in base.columns:
+        m = _re.match(r'^ΒΗΜΑ(\d+)_ΣΕΝΑΡΙΟ_(\d+)$', str(c))
+        if m:
+            n = int(m.group(1))
+            scen = int(m.group(2))
+            if scenario_number is None or scen == scenario_number:
+                step_cols.append((n, scen, c))
+    # sort by step number
+    step_cols.sort(key=lambda x: x[0])
+    cols += [c for _,_,c in step_cols]
+    # if we have only a final column (e.g., 'ΒΗΜΑ6_ΤΜΗΜΑ' or custom), add it as ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_number or 1}
+    if final_column and final_column in base.columns and not any(n==6 for n,_,_ in step_cols):
+        scen = scenario_number or 1
+        new_col = f"ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scen}"
+        base[new_col] = base[final_column]
+        cols.append(new_col)
+    # de-duplicate & keep existent
+    cols = [c for c in cols if c in base.columns]
+    return base[cols]
+
+def export_analytika_vimata_excel(df, scenario_number=1, final_column=None, filename="VIMA6_from_ALL_SHEETS.xlsx") -> BytesIO:
+    buf = BytesIO()
+    slim = _build_analytika_df(df, scenario_number=scenario_number, final_column=final_column)
+    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        slim.to_excel(writer, index=False, sheet_name='ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ')
+    buf.seek(0)
+    # Format with openpyxl
+    wb = load_workbook(buf)
+    ws = wb['ΑΝΑΛΥΤΙΚΑ_ΒΗΜΑΤΑ']
+    ws.freeze_panes = 'B2'
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    center = Alignment(horizontal='center')
+    for col in range(2, ws.max_column+1):
+        for r in range(2, ws.max_row+1):
+            ws.cell(r, col).alignment = center
+    from math import inf
+    for col in range(1, ws.max_column+1):
+        letter = get_column_letter(col)
+        max_len = 0
+        for cell in ws[letter]:
+            v = str(cell.value) if cell.value is not None else ''
+            if len(v) > max_len:
+                max_len = len(v)
+        ws.column_dimensions[letter].width = max(10, min(35, max_len+2))
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    out.name = filename
+    return out
+# === end helper ===
 
 # Import των modules που χρειάζονται
 try:
@@ -512,6 +586,22 @@ def main():
                                 data=zip_data,
                                 file_name="Αποτελέσματα_Ανάθεσης.zip",
                                 mime="application/zip"
+                            )
+
+                            # ΝΕΟ: Εξαγωγή «ΑΝΑΛΥΤΙΚΑ ΒΗΜΑΤΑ (VIMA6)»
+                            st.sidebar.markdown("---")
+                            st.sidebar.caption("Εξαγωγή συγκεκριμένης μορφής Excel")
+                            # σε αυτή την απλή έκδοση, χρησιμοποιούμε μόνο τη στήλη ΤΜΗΜΑ ως ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1
+                            tmp_df = result_df.copy()
+                            if 'ΤΜΗΜΑ' in tmp_df.columns:
+                                buf2 = export_analytika_vimata_excel(tmp_df.rename(columns={'ΤΜΗΜΑ':'ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1'}), scenario_number=1, final_column='ΒΗΜΑ6_ΣΕΝΑΡΙΟ_1')
+                            else:
+                                buf2 = export_analytika_vimata_excel(tmp_df, scenario_number=1, final_column=None)
+                            st.sidebar.download_button(
+                                label="📋 Αναλυτικά Βήματα (VIMA6)",
+                                data=buf2.getvalue(),
+                                file_name=buf2.name,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
             
             # Reset
