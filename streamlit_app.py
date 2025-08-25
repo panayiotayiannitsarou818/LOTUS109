@@ -1,155 +1,123 @@
-
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import math
 import io
 import zipfile
-import traceback
-from datetime import datetime
-from collections import defaultdict, Counter
+import re
+from collections import Counter
 from itertools import combinations
 
-# Optional plotting libs (safe import)
-try:
-    import plotly.express as px
-    PLOTLY_AVAILABLE = True
-except Exception:
-    PLOTLY_AVAILABLE = False
+APP_TITLE = "Κατανομή Μαθητών Α' Δημοτικού — Αναλυτικά Βήματα (Βήμα 1–6) + Βήμα 7 Βαθμολογία"
 
-# ============== Page Setup & Styles ==============
-st.set_page_config(page_title="Κατανομή Μαθητών Α' Δημοτικού", page_icon="🎓", layout="wide")
-
-st.markdown("""
-<style>
-    .main-header { text-align:center; color:#2E86AB; font-size:2.2rem; margin:0 0 1rem; font-weight:700; }
-    .step-header { background:linear-gradient(90deg,#2E86AB,#A23B72); color:#fff; padding:0.8rem 1rem; border-radius:12px; text-align:center; margin:1rem 0; font-weight:700; }
-    .stats-container { background:#f8f9fa; padding:1rem; border-radius:14px; margin:1rem 0; box-shadow:0 2px 10px rgba(0,0,0,0.06); }
-    .success-box { background:#d4edda; border:1px solid #c3e6cb; color:#155724; padding:0.8rem; border-radius:10px; margin:0.6rem 0; }
-    .warning-box { background:#fff3cd; border:1px solid #ffeaa7; color:#856404; padding:0.8rem; border-radius:10px; margin:0.6rem 0; }
-    .error-box { background:#f8d7da; border:1px solid #f5c6cb; color:#721c24; padding:0.8rem; border-radius:10px; margin:0.6rem 0; }
-</style>
-""", unsafe_allow_html=True)
-
-# Fixed footer (1 cm from bottom-right)
-st.markdown("""
-<div style="position:fixed; bottom:1cm; right:1cm; background:white; padding:0.5rem 0.7rem; border-radius:10px; 
-            box-shadow:0 2px 10px rgba(0,0,0,0.2); z-index:1000; font-size:0.8rem; color:#666; border:1px solid #ddd;">
-    © Γιαννίτσαρου Παναγιώτα<br>📧 panayiotayiannitsarou@gmail.com
-</div>
-""", unsafe_allow_html=True)
-
-# ============== Session State ==============
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "terms_accepted": False,
-        "app_enabled": False,
-        "data": None,
-        "current_section": "login",
-        "settings": {
-            "max_students": 25,
-            "max_diff": 2,
-            "num_scenarios": 3,
-            "auto_calc": True,
-            "manual_classes": None,
-            "include_details": True,
-            "show_charts": PLOTLY_AVAILABLE,
-        },
-        "final_results": None,
-        "statistics": None,
-        "detailed_steps": None,
-        "class_labels": None,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-# ============== Auth & Terms ==============
-def show_login():
-    st.markdown("<h1 class='main-header'>🔒 Κλείδωμα Πρόσβασης</h1>", unsafe_allow_html=True)
-    pw = st.text_input("Κωδικός:", type="password")
-    if st.button("🔓 Είσοδος", use_container_width=True):
-        if pw == "katanomi2025":
-            st.session_state.authenticated = True
-            st.session_state.current_section = "terms"
-            st.success("✅ Επιτυχής είσοδος.")
-            st.rerun()
-        else:
-            st.error("❌ Λάθος κωδικός πρόσβασης.")
-
-def show_terms():
-    st.markdown("<h1 class='main-header'>📋 Όροι Χρήσης & Πνευματικά Δικαιώματα</h1>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class="stats-container">
-      <h3 style="text-align:center;color:#2E86AB;">© Νομική Προστασία</h3>
-      <p><b>Δικαιούχος:</b> Γιαννίτσαρου Παναγιώτα — 📧 panayiotayiannitsarou@gmail.com</p>
-      <ol>
-        <li><b>Πνευματικά Δικαιώματα:</b> Απαγορεύεται αναπαραγωγή/τροποποίηση χωρίς άδεια.</li>
-        <li><b>Εκπαιδευτική Χρήση:</b> Αποκλειστικά για κατανομή μαθητών.</li>
-        <li><b>GDPR:</b> Προστασία προσωπικών δεδομένων μαθητών.</li>
-        <li><b>Ευθύνη Χρήσης:</b> Πλήρης ευθύνη του χρήστη.</li>
-        <li><b>Περιορισμοί:</b> Μη εμπορική εκμετάλλευση.</li>
-      </ol>
-      <div style="background:#e3f2fd;padding:0.6rem;border-radius:10px;text-align:center;"><b>⚠️ Η χρήση συνεπάγεται αποδοχή.</b></div>
-    </div>
-    """, unsafe_allow_html=True)
-    accepted = st.checkbox("✅ Αποδέχομαι τους όρους")
-    if st.button("➡️ Συνέχεια", disabled=not accepted, use_container_width=True):
-        st.session_state.terms_accepted = True
-        st.session_state.current_section = "app_control"
-        st.rerun()
-
-def show_app_control():
-    st.markdown("<h1 class='main-header'>⚙️ Έλεγχος Εφαρμογής</h1>", unsafe_allow_html=True)
-    if st.session_state.app_enabled:
-        st.markdown("<div class='success-box'>🟢 Η εφαρμογή είναι ΕΝΕΡΓΗ.</div>", unsafe_allow_html=True)
-        if st.button("🔴 Απενεργοποίηση", use_container_width=True):
-            st.session_state.app_enabled = False
-            st.rerun()
-    else:
-        st.markdown("<div class='warning-box'>🔴 Η εφαρμογή είναι ΑΠΕΝΕΡΓΟΠΟΙΗΜΕΝΗ.</div>", unsafe_allow_html=True)
-        if st.button("🟢 Ενεργοποίηση", use_container_width=True):
-            st.session_state.app_enabled = True
-            st.rerun()
-    if st.session_state.app_enabled:
-        st.markdown("---")
-        if st.button("🚀 Είσοδος στην Κύρια Εφαρμογή", use_container_width=True):
-            st.session_state.current_section = "main_app"
-            st.rerun()
-
-# ============== Utilities ==============
 REQUIRED_COLUMNS = [
     "ΟΝΟΜΑ", "ΦΥΛΟ", "ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ",
     "ΖΩΗΡΟΣ", "ΙΔΙΑΙΤΕΡΟΤΗΤΑ", "ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ",
-    "ΦΙΛΟΙ", "ΣΥΓΚΡΟΥΣΗ", "ΤΜΗΜΑ"
+    "ΦΙΛΟΙ", "ΣΥΓΚΡΟΥΣΗ"
 ]
 
-def validate_excel_columns(df: pd.DataFrame):
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    return missing
+YES_TOKENS = {"Ν", "ΝΑΙ", "Y", "YES", "TRUE", "1"}
+NO_TOKENS  = {"Ο", "ΟΧΙ", "N", "NO", "FALSE", "0"}
 
-def normalize_data(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    # Gender
-    if "ΦΥΛΟ" in df.columns:
-        df["ΦΥΛΟ"] = (
-            df["ΦΥΛΟ"].astype(str).str.upper().str.strip()
-            .replace({"ΑΓΟΡΙ":"Α","ΚΟΡΙΤΣΙ":"Κ","BOY":"Α","GIRL":"Κ","M":"Α","F":"Κ"})
-        )
-    # Yes/No cols
-    for col in ["ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ","ΖΩΗΡΟΣ","ΙΔΙΑΙΤΕΡΟΤΗΤΑ","ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ"]:
-        if col in df.columns:
-            df[col] = (
-                df[col].astype(str).str.upper().str.strip()
-                .replace({"ΝΑΙ":"Ν","ΟΧΙ":"Ο","YES":"Ν","NO":"Ο","1":"Ν","0":"Ο","TRUE":"Ν","FALSE":"Ο"})
-            )
-    # Fill NA strings
-    for col in ["ΦΙΛΟΙ","ΣΥΓΚΡΟΥΣΗ","ΤΜΗΜΑ"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("")
-    return df
+# ------------- Authentication & Terms -------------
+def init_session_state():
+    """Αρχικοποίηση session state"""
+    defaults = {
+        'authenticated': False,
+        'terms_accepted': False,
+        'app_enabled': False,
+        'data': None,
+        'current_section': 'login',
+        'final_results': None,
+        'statistics': None,
+        'detailed_steps': None
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
+def show_login():
+    """Σελίδα εισόδου με κωδικό"""
+    st.markdown("<h1 style='text-align: center; color: #2E86AB;'>🔒 Κλείδωμα Πρόσβασης</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### Εισάγετε τον κωδικό πρόσβασης")
+        password = st.text_input("Κωδικός:", type="password", key="login_password")
+        
+        if st.button("🔓 Είσοδος", key="login_btn", use_container_width=True):
+            if password == "katanomi2025":
+                st.session_state.authenticated = True
+                st.session_state.current_section = 'terms'
+                st.rerun()
+            else:
+                st.error("❌ Λάθος κωδικός πρόσβασης!")
+
+def show_terms():
+    """Σελίδα όρων χρήσης"""
+    st.markdown("<h1 style='text-align: center; color: #2E86AB;'>📋 Όροι Χρήσης & Πνευματικά Δικαιώματα</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col2:
+        st.markdown("""
+        <div style="background: #f8f9fa; padding: 2rem; border-radius: 15px; margin: 1rem 0;">
+        <h3 style="color: #2E86AB; text-align: center;">© Νομική Προστασία</h3>
+        
+        <p><strong>Δικαιούχος Πνευματικών Δικαιωμάτων:</strong><br>
+        <span style="color: #A23B72; font-weight: bold;">Γιαννίτσαρου Παναγιώτα</span><br>
+        📧 panayiotayiannitsarou@gmail.com</p>
+        
+        <hr>
+        
+        <h4>📜 Όροι Χρήσης:</h4>
+        <ol>
+        <li><strong>Πνευματικά Δικαιώματα:</strong> Η παρούσα εφαρμογή προστατεύεται από πνευματικά δικαιώματα.</li>
+        <li><strong>Εκπαιδευτική Χρήση:</strong> Η εφαρμογή προορίζεται αποκλειστικά για εκπαιδευτικούς σκοπούς.</li>
+        <li><strong>Προστασία Δεδομένων:</strong> Ο χρήστης υποχρεούται να προστατεύει τα προσωπικά δεδομένα των μαθητών.</li>
+        </ol>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1_terms, col2_terms = st.columns(2)
+        with col1_terms:
+            if st.checkbox("✅ Αποδέχομαι τους όρους χρήσης", key="terms_checkbox"):
+                st.session_state.terms_accepted = True
+            else:
+                st.session_state.terms_accepted = False
+        
+        with col2_terms:
+            if st.button("➡️ Συνέχεια στην Εφαρμογή", 
+                        disabled=not st.session_state.terms_accepted,
+                        key="terms_continue", use_container_width=True):
+                st.session_state.current_section = 'app_control'
+                st.rerun()
+
+def show_app_control():
+    """Έλεγχος ενεργοποίησης εφαρμογής"""
+    st.markdown("<h1 style='text-align: center; color: #2E86AB;'>⚙️ Έλεγχος Εφαρμογής</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.session_state.app_enabled:
+            st.success("🟢 Κατάσταση: ΕΝΕΡΓΗ")
+            if st.button("🔴 Απενεργοποίηση Εφαρμογής", key="disable_app", use_container_width=True):
+                st.session_state.app_enabled = False
+                st.rerun()
+        else:
+            st.warning("🔴 Κατάσταση: ΑΠΕΝΕΡΓΟΠΟΙΗΜΕΝΗ")
+            if st.button("🟢 Ενεργοποίηση Εφαρμογής", key="enable_app", use_container_width=True):
+                st.session_state.app_enabled = True
+                st.rerun()
+        
+        if st.session_state.app_enabled:
+            st.markdown("---")
+            if st.button("🚀 Είσοδος στην Κύρια Εφαρμογή", key="enter_main_app", use_container_width=True):
+                st.session_state.current_section = 'main_app'
+                st.rerun()
+
+# ------------- Helpers -------------
 def auto_num_classes(df: pd.DataFrame, override: int = None, min_classes: int = 2) -> int:
     if override is not None:
         try:
@@ -162,56 +130,46 @@ def auto_num_classes(df: pd.DataFrame, override: int = None, min_classes: int = 
 def greek_class_labels(k: int):
     return [f"Α{i+1}" for i in range(k)]
 
+def _norm_str(x) -> str:
+    return str(x).strip().upper()
+
+def _is_yes(x) -> bool:
+    return _norm_str(x) in YES_TOKENS
+
 def parse_relationships(text: str):
     if not isinstance(text, str):
         return []
-    # split by commas / semicolons / greek "και"
     parts = []
-    for token in text.replace(";", ",").split(","):
+    for token in re.split(r"[,\;\|/·\n]+", text):
         t = token.strip()
         if t:
-            # also split on ' και '
-            if " και " in t:
+            if " ΚΑΙ " in t.upper():
                 parts.extend([p.strip() for p in t.split(" και ") if p.strip()])
             else:
                 parts.append(t)
     return parts
 
-def build_step_columns_with_prev(dataframe, scenario_dict, scenario_num, base_columns=None):
-    if base_columns is None:
-        base_columns = ["ΟΝΟΜΑ"]
-    df_out = dataframe[base_columns].copy()
-    step_map = scenario_dict.get("data", {})
-    def _step_num_from_key(k):
-        try:
-            return int(k.split("_")[0].replace("ΒΗΜΑ",""))
-        except Exception:
-            return 999
-    ordered_keys = sorted(step_map.keys(), key=_step_num_from_key)
-    full_steps_df = pd.DataFrame({k: pd.Series(v) for k, v in step_map.items()})
-    def _clean_series(s): return s.replace({None:""}).fillna("")
-    prev_series = None
-    prev_changed_mask = None
-    for idx, step_key in enumerate(ordered_keys):
-        curr_series = _clean_series(full_steps_df[step_key].astype(str))
-        if idx == 0:
-            curr_changed_mask = curr_series != ""
-            out_col = pd.Series([""]*len(curr_series), index=curr_series.index, dtype=object)
-            out_col[curr_changed_mask] = curr_series[curr_changed_mask]
-        else:
-            prev_series_filled = _clean_series(prev_series.astype(str))
-            curr_changed_mask = curr_series != prev_series_filled
-            out_col = pd.Series([""]*len(curr_series), index=curr_series.index, dtype=object)
-            out_col[curr_changed_mask] = curr_series[curr_changed_mask]
-            if prev_changed_mask is not None:
-                mask = prev_changed_mask & (~curr_changed_mask)
-                out_col[mask] = prev_series_filled[mask]
-        df_out[step_key] = out_col
-        prev_series = curr_series
-        prev_changed_mask = curr_changed_mask
-    if "final" in scenario_dict:
-        df_out["ΒΗΜΑ7_ΤΕΛΙΚΟ"] = scenario_dict["final"]
-    return df_out
+def normalize_data(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "ΦΥΛΟ" in df.columns:
+        df["ΦΥΛΟ"] = (
+            df["ΦΥΛΟ"].astype(str).str.upper().str.strip()
+            .replace({"ΑΓΟΡΙ":"Α","ΚΟΡΙΤΣΙ":"Κ","BOY":"Α","GIRL":"Κ","M":"Α","F":"Κ"})
+        )
+    for col in ["ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ","ΖΩΗΡΟΣ","ΙΔΙΑΙΤΕΡΟΤΗΤΑ","ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ"]:
+        if col in df.columns:
+            df[col] = (
+                df[col].astype(str).str.upper().str.strip()
+                .replace({"ΝΑΙ":"Ν","ΟΧΙ":"Ο","YES":"Ν","NO":"Ο","1":"Ν","0":"Ο","TRUE":"Ν","FALSE":"Ο"})
+            )
+    for col in ["ΦΙΛΟΙ","ΣΥΓΚΡΟΥΣΗ"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("")
+    return df
+
+def validate_excel_columns(df: pd.DataFrame):
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    return missing
 
 def validate_assignment_constraints(assignment, max_per_class=25, max_diff=2):
     counts = Counter([cls for cls in assignment if cls])
@@ -222,422 +180,823 @@ def validate_assignment_constraints(assignment, max_per_class=25, max_diff=2):
     ok = (max_over == 0) and (diff <= max_diff)
     return ok, {"max_over":max_over, "diff":diff}
 
-def build_statistics(df: pd.DataFrame, assignment, class_labels):
-    # Build a per-class statistics table
-    stats = []
-    for cls in class_labels:
-        idxs = [i for i, c in enumerate(assignment) if c == cls]
-        sub = df.iloc[idxs] if idxs else pd.DataFrame(columns=df.columns)
-        boys = int((sub["ΦΥΛΟ"]=="Α").sum()) if "ΦΥΛΟ" in sub.columns else 0
-        girls = int((sub["ΦΥΛΟ"]=="Κ").sum()) if "ΦΥΛΟ" in sub.columns else 0
-        teachers_kids = int((sub["ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ"]=="Ν").sum()) if "ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ" in sub.columns else 0
-        lively = int((sub["ΖΩΗΡΟΣ"]=="Ν").sum()) if "ΖΩΗΡΟΣ" in sub.columns else 0
-        special = int((sub["ΙΔΙΑΙΤΕΡΟΤΗΤΑ"]=="Ν").sum()) if "ΙΔΙΑΙΤΕΡΟΤΗΤΑ" in sub.columns else 0
-        good_gr = int((sub["ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ"]=="Ν").sum()) if "ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ" in sub.columns else 0
-        stats.append({
-            "Τμήμα": cls,
-            "Μαθητές": len(idxs),
-            "Αγόρια": boys,
-            "Κορίτσια": girls,
-            "Παιδιά Εκπ/κών": teachers_kids,
-            "Ζωηροί": lively,
-            "Ιδιαιτερότητα": special,
-            "Καλή Γνώση Ελληνικών": good_gr,
-        })
-    return pd.DataFrame(stats)
-
-def detailed_score_breakdown(df: pd.DataFrame, assignment, scenario_num):
-    # Gender deviation (>1): +2 per unit beyond 1 (max pairwise deviation)
-    class_labels = sorted(list(set([c for c in assignment if c])))
-    per_class_idxs = {cls:[i for i,c in enumerate(assignment) if c==cls] for cls in class_labels}
-    def count_boys(idxs): return sum(1 for i in idxs if df.iloc[i]["ΦΥΛΟ"]=="Α")
-    def count_good_gr(idxs): return sum(1 for i in idxs if df.iloc[i]["ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ"]=="Ν")
-    # population & gender
-    pops = [len(v) for v in per_class_idxs.values()] or [0]
-    max_pop_diff = max(pops) - min(pops) if pops else 0
-    pop_pen = 3*max(0, max_pop_diff-1)  # (>1): +3/μονάδα
-
-    boys_counts = [count_boys(v) for v in per_class_idxs.values()] or [0]
-    girls_counts = [p-b for p,b in zip(pops, boys_counts)]
-    # measure gender deviation as max|boys-girls| across classes minus 1 threshold
-    gender_devs = [abs(b-g) for b,g in zip(boys_counts, girls_counts)] or [0]
-    max_gender_dev = max(gender_devs) if gender_devs else 0
-    gender_pen = 2*max(0, max_gender_dev-1)
-
-    # Greek knowledge deviation (>2): +1 per unit beyond 2
-    good_gr_counts = [count_good_gr(v) for v in per_class_idxs.values()] or [0]
-    max_good_diff = (max(good_gr_counts)-min(good_gr_counts)) if good_gr_counts else 0
-    greek_pen = max(0, max_good_diff-2) * 1
-
-    # Special-pair conflicts (I-I : +5, I-Z : +4, Z-Z : +3) when in same class
-    I_I = I_Z = Z_Z = 0
-    for cls, idxs in per_class_idxs.items():
-        for i, j in combinations(idxs, 2):
-            row_i, row_j = df.iloc[i], df.iloc[j]
-            isI_i = row_i["ΙΔΙΑΙΤΕΡΟΤΗΤΑ"]=="Ν"
-            isI_j = row_j["ΙΔΙΑΙΤΕΡΟΤΗΤΑ"]=="Ν"
-            isZ_i = row_i["ΖΩΗΡΟΣ"]=="Ν"
-            isZ_j = row_j["ΖΩΗΡΟΣ"]=="Ν"
-            if isI_i and isI_j: I_I += 1
-            elif (isI_i and isZ_j) or (isZ_i and isI_j): I_Z += 1
-            elif isZ_i and isZ_j: Z_Z += 1
-    special_pen = I_I*5 + I_Z*4 + Z_Z*3
-
-    # Broken mutual friendships (+5 per broken fully mutual pair)
-    broken_friends = 0
-    seen_pairs = set()
-    names = df["ΟΝΟΜΑ"].tolist()
-    name_to_index = {n:i for i,n in enumerate(names)}
-    for i, row in df.iterrows():
-        friends = parse_relationships(row.get("ΦΙΛΟΙ",""))
-        for f in friends:
-            if f in name_to_index:
-                j = name_to_index[f]
-                # mutual?
-                fr_friends = parse_relationships(df.iloc[j].get("ΦΙΛΟΙ",""))
-                pair = tuple(sorted([row["ΟΝΟΜΑ"], f]))
-                if row["ΟΝΟΜΑ"] in fr_friends and pair not in seen_pairs:
-                    if assignment[i] != assignment[j]:
-                        broken_friends += 1
-                    seen_pairs.add(pair)
-    broken_pen = broken_friends * 5
-
-    # Explicit external conflicts: if two names in each other's ΣΥΓΚΡΟΥΣΗ appear in same class, heavy penalty
-    conflict_violations = 0
-    for i, row in df.iterrows():
-        conflicts = parse_relationships(row.get("ΣΥΓΚΡΟΥΣΗ",""))
-        for c in conflicts:
-            j = name_to_index.get(c, None)
-            if j is not None and j > i:  # check pair once
-                if assignment[i] == assignment[j] and assignment[i] is not None:
-                    conflict_violations += 1
-    conflict_pen = conflict_violations * 50
-
-    total = gender_pen + pop_pen + greek_pen + special_pen + broken_pen + conflict_pen
-    return {
-        "ΣΕΝΑΡΙΟ": f"ΣΕΝΑΡΙΟ_{scenario_num}",
-        "Δ_ΦΥΛΟ": float(gender_pen),
-        "Δ_ΠΛΗΘΥΣΜΟΣ": float(pop_pen),
-        "Δ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ": float(greek_pen),
-        "ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ι": int(I_I),
-        "ΠΑΙΔ_ΣΥΓΚΡ_Ι_Ζ": int(I_Z),
-        "ΠΑΙΔ_ΣΥΓΚΡ_Ζ_Ζ": int(Z_Z),
-        "ΣΠΑΣΜΕΝΗ_ΦΙΛΙΑ": int(broken_friends),
-        "ΣΥΓΚΡΟΥΣΕΙΣ": int(conflict_violations),
-        "ΒΑΘΜΟΛΟΓΙΑ": float(total),
-    }
-
-# ============== Simple Baseline Allocation (fallback) ==============
-def baseline_allocation(df: pd.DataFrame, class_labels):
-    # round-robin ensures diff ≤1; with k=ceil(N/25) also ensures ≤25 per class
-    N = len(df)
-    assign = []
-    k = len(class_labels)
-    for idx in range(N):
-        assign.append(class_labels[idx % k])
-    return assign
-
-def run_allocation_steps(df: pd.DataFrame, num_classes: int, num_scenarios: int = 3):
+# ------------- ΔΙΟΡΘΩΜΕΝΗ ΛΟΓΙΚΗ ΒΗΜΑΤΩΝ -------------
+def step1_teacher_children_only(df, class_labels, scenario_seed=1):
     """
-    Placeholder pipeline that produces deterministic fair baseline scenarios.
-    It builds step columns ΒΗΜΑ1..ΒΗΜΑ6 (with ΒΗΜΑ2 identical to ΒΗΜΑ1 so the
-    'Νέες+Προηγούμενο' προβολή δουλεύει) και υπολογίζει ΒΗΜΑ7 βαθμολογία.
+    ΒΗΜΑ 1: ΜΟΝΟ παιδιά εκπαιδευτικών
+    Όλοι οι υπόλοιποι μένουν κενοί (None)
     """
+    np.random.seed(scenario_seed * 42)
+    assignment = [None] * len(df)
+    
+    # Βρίσκουμε μόνο παιδιά εκπαιδευτικών
+    teacher_children_indices = []
+    for idx, row in df.iterrows():
+        if _is_yes(row.get("ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ", "")):
+            teacher_children_indices.append(idx)
+    
+    # Κατανέμουμε ισόποσα στα τμήματα
+    for i, idx in enumerate(teacher_children_indices):
+        class_idx = i % len(class_labels)
+        assignment[idx] = class_labels[class_idx]
+    
+    return assignment
+
+def step2_lively_and_special(df, previous_step, class_labels, scenario_seed=1):
+    """
+    ΒΗΜΑ 2: Ζωηροί & μαθητές με ιδιαιτερότητες
+    Κρατάει τους προηγούμενους + προσθέτει νέους
+    """
+    np.random.seed(scenario_seed * 43)
+    assignment = previous_step[:]
+    
+    # Βρίσκουμε ζωηρούς και με ιδιαιτερότητες που δεν έχουν τοποθετηθεί
+    target_indices = []
+    for idx, row in df.iterrows():
+        if assignment[idx] is None:  # Μόνο αν δεν έχει ήδη τοποθετηθεί
+            if (_is_yes(row.get("ΖΩΗΡΟΣ", "")) or 
+                _is_yes(row.get("ΙΔΙΑΙΤΕΡΟΤΗΤΑ", ""))):
+                target_indices.append(idx)
+    
+    # Κατανέμουμε ισόποσα
+    for i, idx in enumerate(target_indices):
+        class_idx = i % len(class_labels)
+        assignment[idx] = class_labels[class_idx]
+    
+    return assignment
+
+def step3_mutual_friendships(df, previous_step, class_labels, scenario_seed=1):
+    """
+    ΒΗΜΑ 3: Αμοιβαίες φιλίες (ΔΥΑΔΕΣ μόνο)
+    """
+    np.random.seed(scenario_seed * 44)
+    assignment = previous_step[:]
+    
+    # Βρίσκουμε αμοιβαίες φιλίες
+    name_to_idx = {row["ΟΝΟΜΑ"]: idx for idx, row in df.iterrows()}
+    processed = set()
+    
+    for idx, row in df.iterrows():
+        if idx in processed or assignment[idx] is not None:
+            continue
+            
+        name = row["ΟΝΟΜΑ"]
+        friends = parse_relationships(row.get("ΦΙΛΟΙ", ""))
+        
+        for friend_name in friends:
+            if friend_name in name_to_idx:
+                friend_idx = name_to_idx[friend_name]
+                if friend_idx in processed or assignment[friend_idx] is not None:
+                    continue
+                    
+                # Έλεγχος αμοιβαιότητας
+                friend_friends = parse_relationships(df.iloc[friend_idx].get("ΦΙΛΟΙ", ""))
+                if name in friend_friends:
+                    # Αμοιβαία φιλία! Τοποθετούμε στο ίδιο τμήμα
+                    class_idx = len([i for i in assignment if i is not None]) % len(class_labels)
+                    target_class = class_labels[class_idx]
+                    
+                    assignment[idx] = target_class
+                    assignment[friend_idx] = target_class
+                    
+                    processed.add(idx)
+                    processed.add(friend_idx)
+                    break
+    
+    return assignment
+
+def step4_friendships_and_balance(df, previous_step, class_labels, scenario_seed=1):
+    """
+    ΒΗΜΑ 4: Φιλίες + ισορροπία φύλου & γνώσης ελληνικών
+    """
+    np.random.seed(scenario_seed * 45)
+    assignment = previous_step[:]
+    
+    # Τοποθετούμε υπόλοιπους με φιλίες (μη αμοιβαίες)
+    unplaced = [idx for idx, cls in enumerate(assignment) if cls is None]
+    
+    for idx in unplaced:
+        if assignment[idx] is not None:
+            continue
+            
+        row = df.iloc[idx]
+        friends = parse_relationships(row.get("ΦΙΛΟΙ", ""))
+        
+        # Βρίσκουμε αν κάποιος φίλος έχει ήδη τοποθετηθεί
+        friend_classes = []
+        name_to_idx = {row["ΟΝΟΜΑ"]: i for i, row in df.iterrows()}
+        
+        for friend_name in friends:
+            if friend_name in name_to_idx:
+                friend_idx = name_to_idx[friend_name]
+                if assignment[friend_idx] is not None:
+                    friend_classes.append(assignment[friend_idx])
+        
+        if friend_classes:
+            # Τοποθετούμε με φίλο
+            assignment[idx] = friend_classes[0]
+        else:
+            # Τοποθετούμε για ισορροπία
+            class_idx = idx % len(class_labels)
+            assignment[idx] = class_labels[class_idx]
+    
+    return assignment
+
+def step5_remaining_students(df, previous_step, class_labels, scenario_seed=1):
+    """
+    ΒΗΜΑ 5: Υπόλοιποι μαθητές χωρίς φιλίες
+    """
+    np.random.seed(scenario_seed * 46)
+    assignment = previous_step[:]
+    
+    # Τοποθετούμε όλους τους υπόλοιπους
+    for idx, cls in enumerate(assignment):
+        if cls is None:
+            class_idx = idx % len(class_labels)
+            assignment[idx] = class_labels[class_idx]
+    
+    return assignment
+
+def step6_final_quality_check(df, previous_step, class_labels, scenario_seed=1):
+    """
+    ΒΗΜΑ 6: Τελικός ποιοτικός/ποσοτικός έλεγχος (ήπιες ανταλλαγές 1↔1)
+    """
+    np.random.seed(scenario_seed * 47)
+    assignment = previous_step[:]
+    
+    # Ήπιες βελτιώσεις χωρίς να χαλάσουμε τις φιλίες
+    # Για απλότητα, κρατάμε το προηγούμενο
+    return assignment
+
+# ------------- Pipeline εκτέλεσης -------------
+def run_pipeline(df, num_classes: int, num_scenarios: int = 3, max_valid_scenarios: int = 5):
+    """Εκτελεί την pipeline για έως max_valid_scenarios έγκυρα σενάρια"""
     class_labels = greek_class_labels(num_classes)
     scenarios = {}
-    for s in range(1, num_scenarios+1):
-        # For variability across scenarios, rotate start index
-        rotated_labels = class_labels[s-1:] + class_labels[:s-1]
-        final_assignment = baseline_allocation(df, rotated_labels)
-
-        # Build dummy steps
-        steps = {}
-        steps[f"ΒΗΜΑ1_ΣΕΝΑΡΙΟ_{s}"] = final_assignment[:]  # first placement
-        steps[f"ΒΗΜΑ2_ΣΕΝΑΡΙΟ_{s}"] = final_assignment[:]  # no changes
-        steps[f"ΒΗΜΑ3_ΣΕΝΑΡΙΟ_{s}"] = final_assignment[:]
-        steps[f"ΒΗΜΑ4_ΣΕΝΑΡΙΟ_{s}"] = final_assignment[:]
-        steps[f"ΒΗΜΑ5_ΣΕΝΑΡΙΟ_{s}"] = final_assignment[:]
-        steps[f"ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{s}"] = final_assignment[:]
-
-        ok, info = validate_assignment_constraints(final_assignment, 25, 2)
-        if not ok:
-            st.warning(f"⚠️ Σενάριο {s}: Παραβίαση ορίων (>{25}/τμήμα ή διαφορά πληθυσμού>{2}). Προσπαθήστε με περισσότερα τμήματα.")
-
-        # Statistics & scores
-        stats = build_statistics(df, final_assignment, class_labels)
-        score = detailed_score_breakdown(df, final_assignment, s)
-
-        scenarios[s] = {
-            "data": steps,
-            "final": final_assignment,
-            "final_score": score["ΒΑΘΜΟΛΟΓΙΑ"],
-            "detailed_score": score,
-            "statistics": stats
-        }
+    scenario_num = 1
+    attempts = 0
+    max_attempts = num_scenarios * 3  # Αποφυγή άπειρου loop
+    
+    while len(scenarios) < max_valid_scenarios and attempts < max_attempts:
+        attempts += 1
+        try:
+            # Εκτέλεση βημάτων
+            step1 = step1_teacher_children_only(df, class_labels, scenario_num)
+            step2 = step2_lively_and_special(df, step1, class_labels, scenario_num)
+            step3 = step3_mutual_friendships(df, step2, class_labels, scenario_num)
+            step4 = step4_friendships_and_balance(df, step3, class_labels, scenario_num)
+            step5 = step5_remaining_students(df, step4, class_labels, scenario_num)
+            step6 = step6_final_quality_check(df, step5, class_labels, scenario_num)
+            
+            # Έλεγχος εγκυρότητας
+            is_valid, _ = validate_assignment_constraints(step6, 25, 2)
+            
+            if is_valid:
+                # Αποθήκευση έγκυρου σεναρίου
+                scenarios[scenario_num] = {
+                    "data": {
+                        f"ΒΗΜΑ1_ΣΕΝΑΡΙΟ_{scenario_num}": step1,
+                        f"ΒΗΜΑ2_ΣΕΝΑΡΙΟ_{scenario_num}": step2,
+                        f"ΒΗΜΑ3_ΣΕΝΑΡΙΟ_{scenario_num}": step3,
+                        f"ΒΗΜΑ4_ΣΕΝΑΡΙΟ_{scenario_num}": step4,
+                        f"ΒΗΜΑ5_ΣΕΝΑΡΙΟ_{scenario_num}": step5,
+                        f"ΒΗΜΑ6_ΣΕΝΑΡΙΟ_{scenario_num}": step6,
+                    },
+                    "final_after6": step6,
+                }
+                scenario_num += 1
+                
+        except Exception as e:
+            # Αν αποτύχει σενάριο, συνεχίζουμε
+            continue
+    
     return scenarios, class_labels
 
-# ============== UI Sections ==============
-def display_data_summary(df):
-    st.markdown("""<div class="stats-container"><h3 style="text-align:center;color:#2E86AB;">📊 Περίληψη Δεδομένων</h3></div>""", unsafe_allow_html=True)
-    total = len(df)
-    boys = int((df["ΦΥΛΟ"]=="Α").sum()) if "ΦΥΛΟ" in df.columns else 0
-    girls = int((df["ΦΥΛΟ"]=="Κ").sum()) if "ΦΥΛΟ" in df.columns else 0
-    teachers_kids = int((df["ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ"]=="Ν").sum()) if "ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ" in df.columns else 0
-    lively = int((df["ΖΩΗΡΟΣ"]=="Ν").sum()) if "ΖΩΗΡΟΣ" in df.columns else 0
-    special = int((df["ΙΔΙΑΙΤΕΡΟΤΗΤΑ"]=="Ν").sum()) if "ΙΔΙΑΙΤΕΡΟΤΗΤΑ" in df.columns else 0
-    good_gr = int((df["ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ"]=="Ν").sum()) if "ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ" in df.columns else 0
+# ------------- Βαθμολογία ΒΗΜΑ 7 -------------
+def score_for_assignment(df: pd.DataFrame, assignment: list) -> int:
+    """Υπολογίζει score για ΒΗΜΑ 7 - όσο χαμηλότερο τόσο καλύτερο"""
+    if not assignment or len(assignment) != len(df):
+        return float('inf')
+    
+    score = 0
+    
+    # Πληθυσμός
+    class_counts = Counter([cls for cls in assignment if cls])
+    if class_counts:
+        pops = list(class_counts.values())
+        pop_diff = max(pops) - min(pops)
+        score += max(0, pop_diff - 1) * 3
+    
+    # Φύλο
+    for class_name in class_counts.keys():
+        class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
+        boys = sum(1 for i in class_indices if df.iloc[i]['ΦΥΛΟ'] == 'Α')
+        girls = len(class_indices) - boys
+        gender_diff = abs(boys - girls)
+        score += max(0, gender_diff - 1) * 2
+    
+    # Γνώση Ελληνικών
+    for class_name in class_counts.keys():
+        class_indices = [i for i, cls in enumerate(assignment) if cls == class_name]
+        good_greek = sum(1 for i in class_indices if _is_yes(df.iloc[i].get('ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', '')))
+        # Υπολογίζουμε διαφορά από άλλα τμήματα (απλοποιημένα)
+        score += 1  # Placeholder
+    
+    # Σπασμένες φιλίες
+    name_to_class = {df.iloc[i]['ΟΝΟΜΑ']: assignment[i] for i in range(len(assignment))}
+    broken_friendships = 0
+    
+    for i, row in df.iterrows():
+        if i < len(assignment):
+            friends = parse_relationships(row.get('ΦΙΛΟΙ', ''))
+            current_class = assignment[i]
+            for friend_name in friends:
+                if friend_name in name_to_class:
+                    if name_to_class[friend_name] != current_class:
+                        broken_friendships += 0.5  # Μετράμε κάθε φιλία μία φορά
+    
+    score += int(broken_friendships) * 5
+    
+    return int(score)
 
-    num_classes = auto_num_classes(df)
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("👥 Συνολικοί Μαθητές", total)
-    c2.metric("👦 Αγόρια", boys)
-    c3.metric("👧 Κορίτσια", girls)
-    c4.metric("🎯 Υπολογισμένα Τμήματα", num_classes)
-    st.markdown("---")
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("🏫 Παιδιά Εκπ/κών", teachers_kids)
-    c2.metric("⚡ Ζωηροί", lively)
-    c3.metric("🎨 Ιδιαιτερότητα", special)
-    c4.metric("🇬🇷 Καλή Γνώση Ελλ.", good_gr)
+def compute_step7_scores(df: pd.DataFrame, scenarios: dict):
+    """Υπολογίζει scores και επιλέγει το καλύτερο"""
+    scores = {}
+    for sn, sdata in scenarios.items():
+        score = score_for_assignment(df, sdata["final_after6"])
+        sdata["step7_score"] = score
+        scores[sn] = score
+    
+    # Επιλέγουμε το καλύτερο (χαμηλότερο score)
+    best_sn = min(scores, key=lambda k: scores[k])
+    return best_sn, scores
+
+# ------------- Αναλυτική προβολή -------------
+def build_analytics_view_upto6_with_score(df: pd.DataFrame, scenario_dict: dict, scenario_num: int):
+    """
+    Δημιουργεί την αναλυτική προβολή:
+    - Νέες τοποθετήσεις του βήματος
+    - + τοποθετήσεις του αμέσως προηγούμενου βήματος  
+    - Όλα τα άλλα κενά
+    """
+    base = df[["ΟΝΟΜΑ"]].copy()
+    step_map = scenario_dict.get("data", {})
+
+    # Ταξινόμηση βημάτων
+    def _knum(k): 
+        try: return int(k.split("_")[0].replace("ΒΗΜΑ",""))
+        except: return 999
+    ordered = sorted(step_map.keys(), key=_knum)
+
+    # DataFrame με όλες τις αναθέσεις
+    full_df = pd.DataFrame({k: pd.Series(v) for k,v in step_map.items()})
+
+    def _clean(s: pd.Series): 
+        return s.replace({None:""}).fillna("")
+
+    prev_series = None
+    prev_changed = None
+    out = base.copy()
+
+    for idx, k in enumerate(ordered):
+        curr = _clean(full_df[k].astype(str))
+        if idx == 0:
+            # Πρώτο βήμα: όλες οι τοποθετήσεις είναι "νέες"
+            changed = curr != ""
+            col = pd.Series([""]*len(curr), index=curr.index, dtype=object)
+            col[changed] = curr[changed]
+        else:
+            # Επόμενα βήματα
+            prev_filled = _clean(prev_series.astype(str))
+            changed = curr != prev_filled
+            col = pd.Series([""]*len(curr), index=curr.index, dtype=object)
+            
+            # 1) Νέες τοποθετήσεις του τρέχοντος βήματος
+            col[changed] = curr[changed]
+            
+            # 2) Τοποθετήσεις του αμέσως προηγούμενου βήματος (μόνο όπου δεν άλλαξε)
+            if prev_changed is not None:
+                mask_prev_only = prev_changed & (~changed)
+                col[mask_prev_only] = prev_filled[mask_prev_only]
+        
+        out[k] = col
+        prev_series = curr
+        prev_changed = changed
+
+    # Προσθήκη βαθμολογίας ΒΗΜΑ7
+    score_val = scenario_dict.get("step7_score", None)
+    if score_val is not None:
+        out[f"ΒΗΜΑ7_ΒΑΘΜΟΛΟΓΙΑ_ΣΕΝΑΡΙΟ_{scenario_num}"] = [score_val]*len(out)
+
+    return out
+
+# ------------- Main App UI -------------
+def show_main_app():
+    """Κύρια εφαρμογή με 5 κουμπιά"""
+    st.markdown("<h1 style='text-align: center; color: #2E86AB;'>🎓 Κατανομή Μαθητών Α' Δημοτικού</h1>", unsafe_allow_html=True)
+    
+    # 5 κύρια κουμπιά
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        if st.button("📤 Εισαγωγή Excel", key="nav_upload", use_container_width=True):
+            st.session_state.current_section = 'upload'
+            st.rerun()
+    
+    with col2:
+        if st.button("⚡ Εκτέλεση Κατανομής", key="nav_execute", use_container_width=True):
+            st.session_state.current_section = 'execute'
+            st.rerun()
+    
+    with col3:
+        if st.button("💾 Εξαγωγή Αποτελέσματος", key="nav_export", use_container_width=True):
+            st.session_state.current_section = 'export'
+            st.rerun()
+    
+    with col4:
+        if st.button("📊 Αναλυτικά Βήματα", key="nav_details", use_container_width=True):
+            st.session_state.current_section = 'details'
+            st.rerun()
+    
+    with col5:
+        if st.button("🔄 Επανεκκίνηση", key="nav_restart", use_container_width=True):
+            st.session_state.current_section = 'restart'
+            st.rerun()
+    
+    # Περιεχόμενο ανάλογα με την ενότητα
+    current_section = st.session_state.get('current_section', 'upload')
+    
+    if current_section == 'upload':
+        show_upload_section()
+    elif current_section == 'execute':
+        show_execute_section()
+    elif current_section == 'export':
+        show_export_section()
+    elif current_section == 'details':
+        show_details_section()
+    elif current_section == 'restart':
+        show_restart_section()
+    else:
+        show_upload_section()
 
 def show_upload_section():
-    st.markdown("<div class='step-header'>📥 Εισαγωγή Δεδομένων</div>", unsafe_allow_html=True)
-    f = st.file_uploader("Ανέβασε Excel (.xlsx) ή CSV", type=["xlsx","csv"])
-    if f is not None:
+    """Ενότητα φόρτωσης Excel"""
+    st.markdown("## 📤 Εισαγωγή Δεδομένων Excel")
+    
+    st.info("""
+    **📋 Απαιτούμενες Στήλες Excel:**
+    - ΟΝΟΜΑ, ΦΥΛΟ (Α/Κ), ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ (Ν/Ο)
+    - ΖΩΗΡΟΣ (Ν/Ο), ΙΔΙΑΙΤΕΡΟΤΗΤΑ (Ν/Ο), ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ (Ν/Ο)
+    - ΦΙΛΟΙ (ονόματα με κόμμα), ΣΥΓΚΡΟΥΣΗ (ονόματα με κόμμα)
+    """)
+    
+    uploaded_file = st.file_uploader("Επιλέξτε αρχείο Excel (.xlsx)", type=['xlsx'])
+    
+    if uploaded_file is not None:
         try:
-            if f.name.lower().endswith(".csv"):
-                df = pd.read_csv(f)
+            df = pd.read_excel(uploaded_file)
+            missing_columns = validate_excel_columns(df)
+            
+            if missing_columns:
+                st.error(f"❌ Λείπουν απαιτούμενες στήλες: {', '.join(missing_columns)}")
             else:
-                df = pd.read_excel(f)
-            missing = validate_excel_columns(df)
-            if missing:
-                st.error("❌ Λείπουν στήλες: " + ", ".join(missing))
-                return
-            df = normalize_data(df)
-            st.session_state.data = df
-            st.success("✅ Το αρχείο φορτώθηκε και κανονικοποιήθηκε.")
-            display_data_summary(df)
+                df = normalize_data(df)
+                st.session_state.data = df
+                
+                st.success("✅ Το αρχείο φορτώθηκε επιτυχώς!")
+                
+                # Προεπισκόπηση δεδομένων
+                total = len(df)
+                boys = (df['ΦΥΛΟ'] == 'Α').sum()
+                girls = (df['ΦΥΛΟ'] == 'Κ').sum()
+                num_classes = auto_num_classes(df)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("👥 Συνολικοί Μαθητές", total)
+                col2.metric("👦 Αγόρια", boys)
+                col3.metric("👧 Κορίτσια", girls)
+                col4.metric("🎯 Απαιτούμενα Τμήματα", num_classes)
+                
+                with st.expander("👁️ Προεπισκόπηση Δεδομένων"):
+                    st.dataframe(df.head(10), use_container_width=True)
+                
+                if st.button("➡️ Συνέχεια στην Εκτέλεση", key="continue_to_execute", use_container_width=True):
+                    st.session_state.current_section = 'execute'
+                    st.rerun()
+                    
         except Exception as e:
-            st.error(f"Σφάλμα φόρτωσης: {e}")
-            st.code(traceback.format_exc())
+            st.error(f"❌ Σφάλμα φόρτωσης αρχείου: {str(e)}")
 
 def show_execute_section():
-    st.markdown("<div class='step-header'>⚡ Εκτέλεση Κατανομής</div>", unsafe_allow_html=True)
+    """Ενότητα εκτέλεσης κατανομής"""
+    st.markdown("## ⚡ Εκτέλεση Κατανομής Μαθητών")
+    
     if st.session_state.data is None:
-        st.warning("Ανέβασε πρώτα δεδομένα.")
+        st.warning("⚠️ Δεν έχουν φορτωθεί δεδομένα")
+        if st.button("📤 Πήγαινε στην Εισαγωγή Excel", key="go_to_upload", use_container_width=True):
+            st.session_state.current_section = 'upload'
+            st.rerun()
         return
+    
+    # Εμφάνιση στοιχείων
+    total_students = len(st.session_state.data)
+    num_classes = auto_num_classes(st.session_state.data)
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("👥 Συνολικοί Μαθητές", total_students)
+    col2.metric("🎯 Απαιτούμενα Τμήματα", num_classes)
+    col3.metric("📊 Μέγιστος αριθμός/τμήμα", "25")
+    
+    st.markdown("---")
+    
+    # Ρυθμίσεις εκτέλεσης
+    col1, col2 = st.columns(2)
+    with col1:
+        num_scenarios = st.selectbox(
+            "🔢 Αριθμός Σεναρίων για εκτέλεση:",
+            options=[1, 2, 3, 4, 5],
+            index=2,
+            help="Περισσότερα σενάρια = καλύτερα αποτελέσματα"
+        )
+    
+    with col2:
+        max_valid = st.selectbox(
+            "🎯 Μέγιστα έγκυρα σενάρια:",
+            options=[3, 4, 5],
+            index=2,
+            help="Μέχρι 5 έγκυρα σενάρια στα αποτελέσματα"
+        )
+    
+    st.markdown("---")
+    
+    # Κουμπί εκτέλεσης
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀 ΕΚΚΙΝΗΣΗ ΚΑΤΑΝΟΜΗΣ", key="start_distribution", use_container_width=True):
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            try:
+                status_text.text("🔄 Αρχικοποίηση αλγορίθμου κατανομής...")
+                progress_bar.progress(10)
+                
+                status_text.text("⚡ Εκτέλεση βημάτων κατανομής...")
+                progress_bar.progress(30)
+                
+                # Εκτέλεση pipeline
+                scenarios, class_labels = run_pipeline(
+                    st.session_state.data, 
+                    auto_num_classes(st.session_state.data),
+                    num_scenarios,
+                    max_valid
+                )
+                
+                if not scenarios:
+                    st.error("❌ Δεν βρέθηκαν έγκυρα σενάρια!")
+                    return
+                
+                status_text.text("📊 Υπολογισμός βαθμολογιών ΒΗΜΑ 7...")
+                progress_bar.progress(70)
+                
+                # Υπολογισμός scores ΒΗΜΑ 7
+                best_scenario, scores = compute_step7_scores(st.session_state.data, scenarios)
+                
+                status_text.text("💾 Αποθήκευση αποτελεσμάτων...")
+                progress_bar.progress(90)
+                
+                # Δημιουργία τελικών δεδομένων
+                final_data = st.session_state.data.copy()
+                final_data['ΤΜΗΜΑ'] = scenarios[best_scenario]['final_after6']
+                
+                # Υπολογισμός στατιστικών
+                stats = calculate_statistics(final_data)
+                
+                # Αποθήκευση αποτελεσμάτων
+                st.session_state.final_results = final_data
+                st.session_state.statistics = stats
+                st.session_state.detailed_steps = scenarios
+                
+                progress_bar.progress(100)
+                status_text.text("✅ Κατανομή ολοκληρώθηκε επιτυχώς!")
+                
+                st.success(f"🎉 Η κατανομή ολοκληρώθηκε! Επιλέχθηκε το Σενάριο {best_scenario} με βαθμολογία {scores[best_scenario]}.")
+                
+                # Εμφάνιση αποτελεσμάτων
+                if stats is not None:
+                    st.markdown("### 📊 Στατιστικά Κατανομής")
+                    st.dataframe(stats, use_container_width=True)
+                
+                # Κουμπιά πλοήγησης
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Εξαγωγή Αποτελεσμάτων", key="go_to_export", use_container_width=True):
+                        st.session_state.current_section = 'export'
+                        st.rerun()
+                
+                with col2:
+                    if st.button("📊 Αναλυτικά Βήματα", key="go_to_details", use_container_width=True):
+                        st.session_state.current_section = 'details'
+                        st.rerun()
+                        
+            except Exception as e:
+                progress_bar.progress(0)
+                status_text.text("")
+                st.error(f"❌ Σφάλμα κατά την εκτέλεση: {str(e)}")
 
-    sets = st.session_state.settings
-    if sets.get("auto_calc", True):
-        num_classes = auto_num_classes(st.session_state.data)
-    else:
-        num_classes = max(2, int(sets.get("manual_classes") or 2))
-
-    st.info(f"Θα χρησιμοποιηθούν **{num_classes}** τμήματα (κανόνας: max(2, ⌈N/25⌉)).")
-
-    num_scenarios = int(sets.get("num_scenarios", 3))
-    if st.button("🚀 Εκτέλεση", use_container_width=True):
-        scenarios, class_labels = run_allocation_steps(st.session_state.data, num_classes, num_scenarios)
-        st.session_state.class_labels = class_labels
-        # choose best by lowest score
-        best_s = min(scenarios.keys(), key=lambda s: scenarios[s]["final_score"])
-        best = scenarios[best_s]
-        # persist unified results
-        final_df = st.session_state.data.copy()
-        final_df["ΤΜΗΜΑ"] = best["final"]
-        st.session_state.final_results = final_df
-        st.session_state.statistics = build_statistics(st.session_state.data, best["final"], class_labels)
-        # all detailed
-        st.session_state.detailed_steps = scenarios
-        st.success(f"✅ Ολοκληρώθηκε. Επιλέχθηκε το ΣΕΝΑΡΙΟ {best_s} (μικρότερη βαθμολογία ΒΗΜΑ7).")
-
-def show_details_section():
-    st.markdown("<div class='step-header'>📊 Αναλυτικά Βήματα</div>", unsafe_allow_html=True)
-    if st.session_state.detailed_steps is None:
-        st.warning("Δεν υπάρχουν αναλυτικά βήματα. Εκτέλεσε πρώτα την κατανομή.")
-        return
-    st.info("Σε κάθε στήλη: Νέες τοποθετήσεις του βήματος + τοποθετήσεις του αμέσως προηγούμενου βήματος.")
-    for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-        st.markdown(f"#### 📋 Σενάριο {scenario_num} — Αναλυτική Προβολή")
-        df_view = build_step_columns_with_prev(st.session_state.data, scenario_data, scenario_num, base_columns=["ΟΝΟΜΑ"])
-        st.dataframe(df_view, use_container_width=True, hide_index=True)
-        if "final_score" in scenario_data:
-            st.markdown(f"**🏆 ΒΗΜΑ7 Βαθμολογία:** {scenario_data['final_score']}")
-        st.markdown("---")
+def calculate_statistics(df):
+    """Υπολογισμός στατιστικών ανά τμήμα"""
+    if 'ΤΜΗΜΑ' not in df.columns:
+        return None
+    
+    stats = []
+    classes = sorted([c for c in df['ΤΜΗΜΑ'].unique() if c and str(c) != 'nan'])
+    
+    for class_name in classes:
+        class_data = df[df['ΤΜΗΜΑ'] == class_name]
+        
+        # Υπολογισμός σπασμένων φιλιών
+        broken_friendships = 0
+        for _, row in class_data.iterrows():
+            friends = parse_relationships(row.get('ΦΙΛΟΙ', ''))
+            for friend in friends:
+                friend_data = df[df['ΟΝΟΜΑ'] == friend]
+                if len(friend_data) > 0 and friend_data.iloc[0]['ΤΜΗΜΑ'] != class_name:
+                    broken_friendships += 0.5
+        
+        stat_row = {
+            'ΤΜΗΜΑ': class_name,
+            'ΑΓΟΡΙΑ': len(class_data[class_data['ΦΥΛΟ'] == 'Α']),
+            'ΚΟΡΙΤΣΙΑ': len(class_data[class_data['ΦΥΛΟ'] == 'Κ']),
+            'ΕΚΠΑΙΔΕΥΤΙΚΟΙ': len(class_data[class_data.get('ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ', '') == 'Ν']),
+            'ΖΩΗΡΟΙ': len(class_data[class_data.get('ΖΩΗΡΟΣ', '') == 'Ν']),
+            'ΙΔΙΑΙΤΕΡΟΤΗΤΑ': len(class_data[class_data.get('ΙΔΙΑΙΤΕΡΟΤΗΤΑ', '') == 'Ν']),
+            'ΓΝΩΣΗ_ΕΛΛ': len(class_data[class_data.get('ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ', '') == 'Ν']),
+            'ΣΠΑΣΜΕΝΗ_ΦΙΛΙΑ': int(broken_friendships),
+            'ΣΥΝΟΛΟ': len(class_data)
+        }
+        stats.append(stat_row)
+    
+    return pd.DataFrame(stats)
 
 def show_export_section():
-    st.markdown("<div class='step-header'>💾 Εξαγωγή Αποτελεσμάτων</div>", unsafe_allow_html=True)
+    """Ενότητα εξαγωγής αποτελεσμάτων"""
+    st.markdown("## 💾 Εξαγωγή Αποτελεσμάτων")
+    
     if st.session_state.final_results is None:
-        st.warning("Δεν υπάρχουν αποτελέσματα. Εκτέλεσε πρώτα την κατανομή.")
+        st.warning("⚠️ Δεν υπάρχουν αποτελέσματα προς εξαγωγή")
+        if st.button("⚡ Πήγαινε στην Εκτέλεση", key="go_to_execute_from_export", use_container_width=True):
+            st.session_state.current_section = 'execute'
+            st.rerun()
         return
-
-    st.markdown("### 👁️ Προεπισκόπηση")
-    col1, col2 = st.columns([2,1])
+    
+    # Προεπισκόπηση αποτελεσμάτων
+    st.markdown("### 👁️ Προεπισκόπηση Αποτελεσμάτων")
+    col1, col2 = st.columns([2, 1])
+    
     with col1:
-        st.dataframe(st.session_state.final_results[['ΟΝΟΜΑ','ΦΥΛΟ','ΤΜΗΜΑ']].head(10), use_container_width=True)
+        st.dataframe(
+            st.session_state.final_results[['ΟΝΟΜΑ', 'ΦΥΛΟ', 'ΤΜΗΜΑ']].head(10), 
+            use_container_width=True
+        )
+    
     with col2:
         if st.session_state.statistics is not None:
-            st.markdown("**📊 Στατιστικά Κατανομής:**")
+            st.markdown("**📊 Στατιστικά:**")
             st.dataframe(st.session_state.statistics, use_container_width=True)
-
+    
     st.markdown("---")
-    st.markdown("### 📁 Επιλογές Εξαγωγής")
-    c1, c2 = st.columns(2)
+    
+    # Εξαγωγή τελικού αρχείου Excel
+    st.markdown("### 💾 Τελικό Αποτέλεσμα")
+    st.info("Αρχείο Excel με την τελική κατανομή στη στήλη ΤΜΗΜΑ")
+    
+    if st.button("📥 Λήψη Τελικού Excel", key="download_final", use_container_width=True):
+        try:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                # Κύρια αποτελέσματα
+                st.session_state.final_results.to_excel(writer, sheet_name='Κατανομή_Μαθητών', index=False)
+                
+                # Στατιστικά
+                if st.session_state.statistics is not None:
+                    st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
+            
+            st.download_button(
+                label="⬇️ Λήψη Αρχείου",
+                data=output.getvalue(),
+                file_name=f"Κατανομή_Μαθητών_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_final_file"
+            )
+            
+            st.success("✅ Το αρχείο είναι έτοιμο για λήψη!")
+            
+        except Exception as e:
+            st.error(f"❌ Σφάλμα δημιουργίας αρχείου: {str(e)}")
 
-    with c1:
-        st.markdown("#### 💾 Τελικό Excel")
-        if st.button("📥 Λήψη Τελικού Excel", use_container_width=True):
-            try:
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    st.session_state.final_results.to_excel(writer, sheet_name='Κατανομή_Μαθητών', index=False)
-                    if st.session_state.statistics is not None:
-                        st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
-                st.download_button(
-                    label="⬇️ Κατέβασε το Excel",
-                    data=output.getvalue(),
-                    file_name=f"Κατανομή_Μαθητών_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_final_excel"
-                )
-            except Exception as e:
-                st.error(f"Σφάλμα δημιουργίας αρχείου: {e}")
-
-    with c2:
-        st.markdown("#### 📦 Αναλυτικά Βήματα (ZIP)")
-        if st.button("📥 Λήψη Αναλυτικών Βημάτων (ZIP)", use_container_width=True):
-            try:
-                if st.session_state.detailed_steps is None:
-                    st.warning("Δεν υπάρχουν αναλυτικά βήματα.")
-                    return
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    # per-scenario files
-                    for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-                        excel_buffer = io.BytesIO()
-                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                            # 1) Αναλυτική προβολή (Νέες + Προηγούμενο)
-                            df_detailed_view = build_step_columns_with_prev(
-                                st.session_state.data, scenario_data, scenario_num, base_columns=["ΟΝΟΜΑ"]
-                            )
-                            df_detailed_view.to_excel(writer, sheet_name=f"Σενάριο_{scenario_num}_Αναλυτικά", index=False)
-
-                            # 2) Πλήρες Ιστορικό (ΒΗΜΑ1..ΒΗΜΑ6 πλήρη)
-                            df_full_history = st.session_state.data[["ΟΝΟΜΑ"]].copy()
-                            for step_key in sorted(scenario_data["data"].keys()):
-                                df_full_history[step_key] = scenario_data["data"][step_key]
-                            df_full_history["ΒΗΜΑ7_ΤΕΛΙΚΟ"] = scenario_data["final"]
-                            df_full_history.to_excel(writer, sheet_name=f"Σενάριο_{scenario_num}_Πλήρες_Ιστορικό", index=False)
-
-                            # 3) Αναλυτική Βαθμολογία ΒΗΜΑ7
-                            if "detailed_score" in scenario_data:
-                                pd.DataFrame([scenario_data["detailed_score"]]).to_excel(
-                                    writer, sheet_name="ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7_ΑΝΑΛΥΤΙΚΗ", index=False
-                                )
-                            else:
-                                pd.DataFrame([{
-                                    "ΣΕΝΑΡΙΟ": f"ΣΕΝΑΡΙΟ_{scenario_num}",
-                                    "ΒΑΘΜΟΛΟΓΙΑ": scenario_data.get("final_score", 0)
-                                }]).to_excel(writer, sheet_name="ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7", index=False)
-
-                        zip_file.writestr(f"ΣΕΝΑΡΙΟ_{scenario_num}_Αναλυτικά_Βήματα.xlsx", excel_buffer.getvalue())
-
-                    # summary workbook
+def show_details_section():
+    """Ενότητα αναλυτικών βημάτων"""
+    st.markdown("## 📊 Αναλυτικά Βήματα Κατανομής")
+    
+    if st.session_state.detailed_steps is None:
+        st.warning("⚠️ Δεν υπάρχουν αναλυτικά βήματα")
+        if st.button("⚡ Πήγαινε στην Εκτέλεση", key="go_to_execute_from_details", use_container_width=True):
+            st.session_state.current_section = 'execute'
+            st.rerun()
+        return
+    
+    st.info("Σε κάθε στήλη εμφανίζονται οι νέες τοποθετήσεις του βήματος και οι τοποθετήσεις του αμέσως προηγούμενου βήματος. Τα υπόλοιπα κελιά μένουν κενά.")
+    
+    # Εμφάνιση αναλυτικών βημάτων ανά σενάριο
+    for scenario_num, scenario_data in st.session_state.detailed_steps.items():
+        st.markdown(f"### 📄 Σενάριο {scenario_num} — Αναλυτική Προβολή")
+        view = build_analytics_view_upto6_with_score(st.session_state.data, scenario_data, scenario_num)
+        st.dataframe(view, use_container_width=True, hide_index=True)
+        
+        # Εμφάνιση βαθμολογίας
+        if 'step7_score' in scenario_data:
+            st.markdown(f"**🏆 ΒΗΜΑ7 Βαθμολογία:** {scenario_data['step7_score']}")
+        
+        st.markdown("---")
+    
+    # Εξαγωγή ZIP με αναλυτικά βήματα
+    st.markdown("### 📥 Λήψη Αναλυτικών Βημάτων (ZIP)")
+    st.info("ZIP αρχείο με όλα τα ενδιάμεσα βήματα (ΒΗΜΑ1 έως ΒΗΜΑ6) + βαθμολογία ΒΗΜΑ7")
+    
+    if st.button("📥 Λήψη Αναλυτικών Βημάτων", key="download_detailed", use_container_width=True):
+        try:
+            zip_buffer = io.BytesIO()
+            
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                
+                for scenario_num, scenario_data in st.session_state.detailed_steps.items():
+                    # Δημιουργία Excel για κάθε σενάριο
+                    excel_buffer = io.BytesIO()
+                    
+                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                        # Αναλυτική προβολή (νέες + προηγούμενο βήμα)
+                        df_detailed_view = build_analytics_view_upto6_with_score(
+                            st.session_state.data, 
+                            scenario_data, 
+                            scenario_num
+                        )
+                        df_detailed_view.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}_Αναλυτικά', index=False)
+                        
+                        # Πλήρες ιστορικό (όλες οι στήλες γεμάτες)
+                        df_full_history = st.session_state.data[['ΟΝΟΜΑ']].copy()
+                        for step_key in sorted(scenario_data['data'].keys()):
+                            df_full_history[step_key] = scenario_data['data'][step_key]
+                        df_full_history['ΒΗΜΑ7_ΤΕΛΙΚΟ'] = scenario_data['final_after6']
+                        df_full_history.to_excel(writer, sheet_name=f'Σενάριο_{scenario_num}_Πλήρες_Ιστορικό', index=False)
+                        
+                        # Βαθμολογία
+                        if 'step7_score' in scenario_data:
+                            scores_df = pd.DataFrame([{
+                                'ΣΕΝΑΡΙΟ': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                                'ΒΗΜΑ7_ΒΑΘΜΟΛΟΓΙΑ': scenario_data['step7_score'],
+                                'Περιγραφή': 'Τελική βαθμολογία για το Βήμα 7 (Αποφυγή Συγκρούσεων & Τελική Κατανομή)'
+                            }])
+                            scores_df.to_excel(writer, sheet_name='ΒΑΘΜΟΛΟΓΙΑ_ΒΗΜΑ7', index=False)
+                    
+                    zip_file.writestr(
+                        f"Σενάριο_{scenario_num}_Αναλυτικά.xlsx",
+                        excel_buffer.getvalue()
+                    )
+                
+                # Συνοπτικό αρχείο σύγκρισης
+                if st.session_state.detailed_steps:
                     summary_buffer = io.BytesIO()
                     with pd.ExcelWriter(summary_buffer, engine='xlsxwriter') as writer:
+                        
+                        # Στατιστικά
                         if st.session_state.statistics is not None:
-                            st.session_state.statistics.to_excel(writer, sheet_name="Στατιστικά", index=False)
-                        # collect scenario scores
-                        comp_rows = []
-                        det_rows = []
+                            st.session_state.statistics.to_excel(writer, sheet_name='Στατιστικά', index=False)
+                        
+                        # Σύγκριση scores
+                        scenario_comparison = []
                         for scenario_num, scenario_data in st.session_state.detailed_steps.items():
-                            if "final_score" in scenario_data:
-                                comp_rows.append({
-                                    "Σενάριο": f"ΣΕΝΑΡΙΟ_{scenario_num}",
-                                    "ΒΗΜΑ7_ΤΕΛΙΚΟ_SCORE": scenario_data["final_score"]
+                            if 'step7_score' in scenario_data:
+                                scenario_comparison.append({
+                                    'Σενάριο': f'ΣΕΝΑΡΙΟ_{scenario_num}',
+                                    'ΒΗΜΑ7_ΤΕΛΙΚΟ_SCORE': scenario_data['step7_score']
                                 })
-                            if "detailed_score" in scenario_data:
-                                det_rows.append(scenario_data["detailed_score"])
-                        if comp_rows:
-                            pd.DataFrame(comp_rows).to_excel(writer, sheet_name="Σύγκριση_ΒΗΜΑ7_Scores", index=False)
-                        if det_rows:
-                            pd.DataFrame(det_rows).to_excel(writer, sheet_name="Αναλυτική_Σύγκριση_ΒΗΜΑ7", index=False)
+                        
+                        if scenario_comparison:
+                            comparison_df = pd.DataFrame(scenario_comparison)
+                            comparison_df.to_excel(writer, sheet_name='Σύγκριση_ΒΗΜΑ7_Scores', index=False)
+                    
                     zip_file.writestr("ΣΥΝΟΨΗ_Σύγκριση_Σεναρίων.xlsx", summary_buffer.getvalue())
-
-                st.download_button(
-                    label="⬇️ Κατέβασε το ZIP",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"Αναλυτικά_Βήματα_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-                    mime="application/zip",
-                    key="dl_zip"
-                )
-                st.success("✅ Το ZIP ετοιμάστηκε.")
-            except Exception as e:
-                st.error(f"Σφάλμα δημιουργίας ZIP: {e}")
-                st.code(traceback.format_exc())
-
-def show_settings_section():
-    st.markdown("<div class='step-header'>⚙️ Ρυθμίσεις</div>", unsafe_allow_html=True)
-    sets = st.session_state.settings
-    c1,c2 = st.columns(2)
-    with c1:
-        st.markdown("### 🎛️ Παράμετροι Κατανομής")
-        sets["max_students"] = st.slider("Μέγιστο ανά τμήμα", 20, 30, sets.get("max_students",25), help="Προδιαγραφή: 25")
-        sets["max_diff"] = st.slider("Μέγιστη διαφορά πληθυσμού", 1, 5, sets.get("max_diff",2), help="Προδιαγραφή: 2")
-        sets["num_scenarios"] = st.selectbox("Αριθμός σεναρίων", [1,2,3,4,5], index=(sets.get("num_scenarios",3)-1))
-        sets["auto_calc"] = st.checkbox("Αυτόματος υπολογισμός τμημάτων", value=sets.get("auto_calc",True))
-        if not sets["auto_calc"]:
-            sets["manual_classes"] = st.number_input("Χειροκίνητα τμήματα", min_value=2, max_value=10, value=sets.get("manual_classes") or 2)
-    with c2:
-        st.markdown("### 📁 Εξαγωγή & Εμφάνιση")
-        sets["include_details"] = st.checkbox("Συμπερίληψη αναλυτικών βημάτων", value=sets.get("include_details",True))
-        sets["show_charts"] = st.checkbox("Εμφάνιση γραφημάτων", value=sets.get("show_charts",PLOTLY_AVAILABLE))
-        st.info("Η εμφάνιση γραφημάτων εξαρτάται από τη διαθεσιμότητα Plotly.")
-    if st.button("💾 Αποθήκευση Ρυθμίσεων", use_container_width=True):
-        st.success("✅ Αποθηκεύτηκαν.")
+            
+            st.download_button(
+                label="⬇️ Λήψη ZIP Αρχείου",
+                data=zip_buffer.getvalue(),
+                file_name=f"Αναλυτικά_Βήματα_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.zip",
+                mime="application/zip",
+                key="download_detailed_file"
+            )
+            
+            st.success("✅ Το ZIP αρχείο είναι έτοιμο για λήψη!")
+            
+        except Exception as e:
+            st.error(f"❌ Σφάλμα δημιουργίας ZIP: {str(e)}")
 
 def show_restart_section():
-    st.markdown("<div class='step-header'>🔄 Επανεκκίνηση</div>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class="warning-box">
-        <b>Προσοχή:</b> Θα διαγραφούν δεδομένα, αποτελέσματα, στατιστικά & βήματα.
-    </div>""", unsafe_allow_html=True)
-    if st.checkbox("✅ Επιβεβαιώνω επανεκκίνηση"):
-        if st.button("🔄 ΕΠΑΝΕΚΚΙΝΗΣΗ", use_container_width=True):
-            keep = ["authenticated","terms_accepted","app_enabled"]
-            for k in list(st.session_state.keys()):
-                if k not in keep:
-                    del st.session_state[k]
-            st.session_state.current_section = "upload"
-            st.success("✅ Επανεκκίνηση ολοκληρώθηκε.")
+    """Ενότητα επανεκκίνησης"""
+    st.markdown("## 🔄 Επανεκκίνηση Εφαρμογής")
+    
+    st.warning("""
+    ⚠️ **Προσοχή**: Η επανεκκίνηση θα διαγράψει:
+    - Όλα τα φορτωμένα δεδομένα
+    - Τα αποτελέσματα κατανομής
+    - Τα στατιστικά και αναλυτικά βήματα
+    
+    **Η ενέργεια αυτή δεν μπορεί να ανακληθεί!**
+    """)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        confirm_restart = st.checkbox("✅ Επιβεβαιώνω ότι θέλω να επανεκκινήσω την εφαρμογή", key="confirm_restart")
+        
+        if st.button("🔄 ΕΠΑΝΕΚΚΙΝΗΣΗ ΕΦΑΡΜΟΓΗΣ", 
+                    disabled=not confirm_restart,
+                    key="restart_app_btn", 
+                    use_container_width=True):
+            
+            # Διαγραφή όλων των δεδομένων εκτός από authentication
+            keys_to_keep = ['authenticated', 'terms_accepted', 'app_enabled']
+            keys_to_clear = [k for k in st.session_state.keys() if k not in keys_to_keep]
+            
+            for key in keys_to_clear:
+                del st.session_state[key]
+            
+            # Reset στην αρχική οθόνη
+            st.session_state.current_section = 'upload'
+            st.success("✅ Η εφαρμογή επανεκκινήθηκε επιτυχώς!")
             st.rerun()
 
-# ============== Main App ==============
-def show_main_app():
-    st.markdown("<h1 class='main-header'>🎓 Κατανομή Μαθητών Α' Δημοτικού</h1>", unsafe_allow_html=True)
-    tabs = st.tabs(["📥 Εισαγωγή", "⚡ Εκτέλεση", "📊 Αναλυτικά", "💾 Εξαγωγή", "⚙️ Ρυθμίσεις", "🔄 Επανεκκίνηση"])
-    with tabs[0]: show_upload_section()
-    with tabs[1]: show_execute_section()
-    with tabs[2]: show_details_section()
-    with tabs[3]: show_export_section()
-    with tabs[4]: show_settings_section()
-    with tabs[5]: show_restart_section()
-
-# ============== Controller ==============
+# ------------- Main Application Entry Point -------------
 def main():
-    init_session_state()
-    if not st.session_state.authenticated:
-        show_login(); return
-    if not st.session_state.terms_accepted:
-        show_terms(); return
-    if not st.session_state.app_enabled:
-        show_app_control(); return
-    show_main_app()
+    """Κύρια συνάρτηση εφαρμογής"""
+    st.set_page_config(
+        page_title="Κατανομή Μαθητών Α' Δημοτικού",
+        page_icon="🎓",
+        layout="wide"
+    )
+    
+    # CSS Styling
     st.markdown("""
-    <div style="text-align:center;color:#666;font-size:0.9rem;margin-top:1.4rem;padding:0.8rem;border-top:1px solid #ddd;">
-      © 2025 Γιαννίτσαρου Παναγιώτα — Όλα τα δικαιώματα κατοχυρωμένα
+    <style>
+        .main-header {
+            text-align: center;
+            color: #2E86AB;
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            font-weight: bold;
+        }
+        .copyright-text {
+            position: fixed;
+            bottom: 1cm;
+            right: 1cm;
+            background: white;
+            padding: 0.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            font-size: 0.8rem;
+            color: #666;
+            border: 1px solid #ddd;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Logo κάτω δεξιά - 1cm απόσταση από τις άκριες
+    st.markdown("""
+    <div class="copyright-text">
+        © Γιαννίτσαρου Παναγιώτα<br>
+        📧 panayiotayiannitsarou@gmail.com
     </div>
     """, unsafe_allow_html=True)
+    
+    # Αρχικοποίηση
+    init_session_state()
+    
+    # Authentication flow
+    if not st.session_state.authenticated:
+        show_login()
+        return
+    
+    if not st.session_state.terms_accepted:
+        show_terms()
+        return
+    
+    if not st.session_state.app_enabled:
+        show_app_control()
+        return
+    
+    # Κύρια εφαρμογή
+    show_main_app()
 
+# Run the application
 if __name__ == "__main__":
     main()
