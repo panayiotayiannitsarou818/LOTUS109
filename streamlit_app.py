@@ -1509,6 +1509,20 @@ class StudentDistributor:
         final_assignment = self.scenarios[best_scenario]['final']
         
         # Add final assignment to data
+        
+        # ΤΕΛΙΚΟΣ ΕΛΕΓΧΟΣ ΟΡΙΩΝ: ≤25/τμήμα και διαφορά πληθυσμού ≤2 (σύμφωνα με οδηγίες)
+        try:
+            from collections import Counter
+            _counts = Counter([c for c in final_assignment if c])
+            if _counts:
+                _max_over = max(_counts.values()) - 25
+                _pop_diff = max(_counts.values()) - min(_counts.values())
+                if _max_over > 0 or _pop_diff > 2:
+                    import streamlit as st
+                    st.warning(f"⚠️ Το επιλεγμένο σενάριο παραβιάζει όρια (>{25}/τμήμα ή διαφορά>{2}). "
+                               f"Εξετάστε αύξηση τμημάτων (max(2, ⌈N/25⌉)) ή επανεκτέλεση.")
+        except Exception as _e:
+            pass
         self.data['ΤΜΗΜΑ'] = final_assignment
         
         return self.data, self.scenarios
