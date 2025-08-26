@@ -1279,3 +1279,74 @@ try:
         st.session_state["_vima6_button_added"] = True
 except Exception:
     pass
+
+
+
+
+# === OVERRIDE: VIMA6 builder to output ALL-SHEETS format (ΒΑΘΜΟΛΟΓΙΑ + ΣΕΝΑΡΙΟ n) ===
+from io import BytesIO as _BytesIO
+import pandas as _pd
+
+def build_vima6_excel_bytes(base_df, detailed_steps, step7_scores=None):
+    return build_vima6_excel_bytes_ALLSHEETS(base_df, detailed_steps, step7_scores)
+
+def build_vima6_excel_bytes_ALLSHEETS(base_df, detailed_steps, step7_scores=None):
+    try:
+        scenario_ids = sorted([int(k) for k in detailed_steps.keys()])
+    except Exception:
+        scenario_ids = sorted(list(detailed_steps.keys()))
+    rows = []
+    for sid in scenario_ids:
+        key = sid if sid in detailed_steps else str(sid)
+        score = None
+        if isinstance(step7_scores, dict):
+            score = step7_scores.get(key, step7_scores.get(str(key), None))
+        scen = detailed_steps[str(key)] if str(key) in detailed_steps else detailed_steps[key]
+        if score is None and isinstance(scen, dict) and 'step7_score' in scen:
+            score = scen['step7_score']
+        rows.append({"ΣΕΝΑΡΙΟ": int(sid) if (isinstance(sid, int) or str(sid).isdigit()) else sid,
+                     "ΒΑΘΜΟΛΟΓΙΑ": score})
+    scores_df = _pd.DataFrame(rows)
+    if not scores_df["ΒΑΘΜΟΛΟΓΙΑ"].isna().all():
+        best = scores_df["ΒΑΘΜΟΛΟΓΙΑ"].astype(float).idxmin()
+        scores_df["ΤΕΛΙΚΟ ΣΕΝΑΡΙΟ"] = False
+        if best is not None:
+            scores_df.loc[best, "ΤΕΛΙΚΟ ΣΕΝΑΡΙΟ"] = True
+    else:
+        scores_df["ΤΕΛΙΚΟ ΣΕΝΑΡΙΟ"] = False
+
+    base_cols = ["ΟΝΟΜΑ","ΦΥΛΟ","ΠΑΙΔΙ_ΕΚΠΑΙΔΕΥΤΙΚΟΥ","ΖΩΗΡΟΣ","ΙΔΙΑΙΤΕΡΟΤΗΤΑ","ΚΑΛΗ_ΓΝΩΣΗ_ΕΛΛΗΝΙΚΩΝ","ΦΙΛΟΙ","ΣΥΓΚΡΟΥΣΗ"]
+    def _base(df):
+        out = _pd.DataFrame()
+        for c in base_cols:
+            out[c] = df[c] if c in df.columns else ""
+        return out
+
+    bio = _BytesIO()
+    with _pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+        scores_df.to_excel(writer, sheet_name="ΒΑΘΜΟΛΟΓΙΑ ΣΕΝΑΡΙΩΝ", index=False)
+        for sid in scenario_ids:
+            skey = str(sid) if str(sid) in detailed_steps else sid
+            scen = detailed_steps[skey]
+            df_out = _base(base_df)
+
+            for step in range(1,7):
+                colname = f"ΒΗΜΑ{step}_ΣΕΝΑΡΙΟ_{sid}"
+                series = None
+                if isinstance(scen, dict) and 'data' in scen and isinstance(scen['data'], dict):
+                    if colname in scen['data']:
+                        series = scen['data'][colname]
+                    else:
+                        for k, v in scen['data'].items():
+                            if isinstance(k, str) and k.startswith(f"ΒΗΜΑ{step}_ΣΕΝΑΡΙΟ_") and k.endswith(f"_{sid}"):
+                                series = v; break
+                df_out[colname] = _pd.Series(series).values if series is not None else ""
+
+            sheet_name = f"ΣΕΝΑΡΙΟ {sid}"
+            df_out.to_excel(writer, sheet_name=sheet_name, index=False)
+            try:
+                ws = writer.sheets[sheet_name]
+                ws.freeze_panes(1,1)
+            except Exception:
+                pass
+    return bio.getvalue()
