@@ -833,3 +833,53 @@ def create_detailed_steps_workbook():
         st.error(f"Σφάλμα στη δημιουργία VIMA6 αρχείου: {e}")
         st.code(traceback.format_exc())
         return None
+
+
+
+# === VIMA6 universal sidebar export button (auto-added) ===
+try:
+    import streamlit as st  # safe re-import
+except Exception:
+    pass
+
+def _render_vima6_sidebar_button():
+    try:
+        st.sidebar.markdown("### 📋 Αναλυτικά Βήματα (VIMA6)")
+        if getattr(st.session_state, "data", None) is None or not getattr(st.session_state, "detailed_steps", {}):
+            st.sidebar.info("Φόρτωσε δεδομένα και εκτέλεσε την κατανομή για να ενεργοποιηθεί η λήψη.")
+            return
+        if st.sidebar.button("⬇️ VIMA6_from_ALL_SHEETS.xlsx", key="vima6_sidebar_btn", use_container_width=True):
+            # Προαιρετικά: συλλογή βαθμολογιών Βήμα 7 αν υπάρχουν
+            step7_scores = None
+            try:
+                if isinstance(st.session_state.detailed_steps, dict):
+                    scores = {}
+                    for scen_num, scen_data in st.session_state.detailed_steps.items():
+                        if isinstance(scen_data, dict) and 'step7_score' in scen_data:
+                            scores[scen_num] = scen_data['step7_score']
+                    step7_scores = scores or None
+            except Exception:
+                step7_scores = None
+            excel_bytes = build_vima6_excel_bytes(
+                base_df=st.session_state.data,
+                detailed_steps=st.session_state.detailed_steps,
+                step7_scores=step7_scores
+            )
+            st.sidebar.download_button(
+                label="Λήψη αρχείου",
+                data=excel_bytes,
+                file_name="VIMA6_from_ALL_SHEETS.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="vima6_sidebar_dl"
+            )
+    except Exception as _e:
+        try:
+            st.sidebar.error(f"Σφάλμα κουμπιού VIMA6: {_e}")
+        except Exception:
+            pass
+
+# Αυτό το καλούμε ώστε να εμφανίζεται το κουμπί σε κάθε σελίδα του app
+try:
+    _render_vima6_sidebar_button()
+except Exception:
+    pass
